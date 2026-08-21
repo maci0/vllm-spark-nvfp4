@@ -53,6 +53,24 @@ Upstream wires b12x MXFP4 through `fused_moe/oracle/mxfp4.py`, exposing
 `B12X_MXFP4_MXFP8` and `B12X_MXFP4_BF16`. PR #52018 depends on infrastructure
 from #52016, so both are cherry-picked.
 
+### Per-site dtype binding
+
+`models/deepseek_v4/attention.py` computes the page alignment in two different
+classes, each deriving the KV dtype from a different place:
+
+| site | class | dtype source |
+|---|---|---|
+| ~663 | `DeepseekV4Attention` | `self.kv_cache_dtype` |
+| ~698 | `DeepseekV4IndexerCache` | `vllm_config.cache_config.cache_dtype` |
+
+The patch binds each site's own expression to a local `_dsv4_cache_dtype` and
+passes that to the alignment helper. Substituting `self.kv_cache_dtype` at both
+sites looks correct and builds fine, but fails at runtime with:
+
+```
+'DeepseekV4IndexerCache' object has no attribute 'kv_cache_dtype'
+```
+
 ### Deliberately dropped hunks
 
 4 of #52018's 13 hunks are omitted because they target code that does not exist
@@ -64,6 +82,17 @@ in 0.27.1, and none affect MoE dispatch:
 
 The shipped combined patch contains only what applied and verified, so the build
 has no rejects.
+
+**One thing #52018 references but does not define:** `B12xWarmupUnit`, imported
+by `fused_moe/b12x.py` from `vllm.utils.b12x`. It landed on upstream main in a
+separate commit that is in neither PR nor in v0.27.1, so without it the image
+builds cleanly and then dies at import:
+
+```
+cannot import name 'B12xWarmupUnit' from 'vllm.utils.b12x'
+```
+
+The patch adds the dataclass verbatim from main.
 
 ## The NVFP4 KV patch
 

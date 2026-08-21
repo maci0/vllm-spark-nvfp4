@@ -1,6 +1,6 @@
 diff -ruN /tmp/pristine/vllm/config/cache.py /tmp/t2/vllm/config/cache.py
 --- a/vllm/config/cache.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/config/cache.py	2026-08-21 20:44:13.691635797 +0800
++++ b/vllm/config/cache.py	2026-08-21 21:16:17.809610272 +0800
 @@ -25,6 +25,7 @@
      "fp8_e5m2",
      "fp8_inc",
@@ -11,7 +11,7 @@ diff -ruN /tmp/pristine/vllm/config/cache.py /tmp/t2/vllm/config/cache.py
      "turboquant_k3v4_nc",
 diff -ruN /tmp/pristine/vllm/config/kernel.py /tmp/t2/vllm/config/kernel.py
 --- a/vllm/config/kernel.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/config/kernel.py	2026-08-21 20:44:13.891406280 +0800
++++ b/vllm/config/kernel.py	2026-08-21 21:16:17.815527231 +0800
 @@ -130,6 +130,7 @@
      "flashinfer_cutlass",
      "flashinfer_cutedsl",
@@ -46,7 +46,7 @@ diff -ruN /tmp/pristine/vllm/config/kernel.py /tmp/t2/vllm/config/kernel.py
      - "deep_gemm": Use DeepGEMM kernels
 diff -ruN /tmp/pristine/vllm/envs.py /tmp/t2/vllm/envs.py
 --- a/vllm/envs.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/envs.py	2026-08-21 20:44:13.891534185 +0800
++++ b/vllm/envs.py	2026-08-21 21:16:17.815652078 +0800
 @@ -181,6 +181,7 @@
      VLLM_HUMMING_INPUT_QUANT_CONFIG: dict[str, Any] | None = None
      VLLM_HUMMING_USE_F16_ACCUM: bool = False
@@ -68,7 +68,7 @@ diff -ruN /tmp/pristine/vllm/envs.py /tmp/t2/vllm/envs.py
          int(os.getenv("VLLM_USE_FLASHINFER_MOE_INT4", "0"))
 diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/__init__.py /tmp/t2/vllm/model_executor/kernels/linear/__init__.py
 --- a/vllm/model_executor/kernels/linear/__init__.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/kernels/linear/__init__.py	2026-08-21 20:44:13.889173870 +0800
++++ b/vllm/model_executor/kernels/linear/__init__.py	2026-08-21 21:16:17.814305330 +0800
 @@ -77,6 +77,9 @@
  from vllm.model_executor.kernels.linear.mxfp4.aiter import (
      AiterMxfp4LinearKernel,
@@ -185,7 +185,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/__init__.py /tmp/t2/v
  ]
 diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/mxfp4/b12x.py /tmp/t2/vllm/model_executor/kernels/linear/mxfp4/b12x.py
 --- a/vllm/model_executor/kernels/linear/mxfp4/b12x.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/model_executor/kernels/linear/mxfp4/b12x.py	2026-08-21 20:44:13.889283678 +0800
++++ b/vllm/model_executor/kernels/linear/mxfp4/b12x.py	2026-08-21 21:16:17.814407314 +0800
 @@ -0,0 +1,170 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -359,7 +359,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/mxfp4/b12x.py /tmp/t2
 +__all__ = ["B12xMxFp4LinearKernel", "warmup_b12x_mxfp4_linear"]
 diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/mxfp8/b12x.py /tmp/t2/vllm/model_executor/kernels/linear/mxfp8/b12x.py
 --- a/vllm/model_executor/kernels/linear/mxfp8/b12x.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/model_executor/kernels/linear/mxfp8/b12x.py	2026-08-21 20:44:13.889334382 +0800
++++ b/vllm/model_executor/kernels/linear/mxfp8/b12x.py	2026-08-21 21:16:17.814461794 +0800
 @@ -0,0 +1,193 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -556,7 +556,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/mxfp8/b12x.py /tmp/t2
 +        return _apply_b12x_mxfp8_packed_linear(layer, x, bias)
 diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/nvfp4/b12x.py /tmp/t2/vllm/model_executor/kernels/linear/nvfp4/b12x.py
 --- a/vllm/model_executor/kernels/linear/nvfp4/b12x.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/model_executor/kernels/linear/nvfp4/b12x.py	2026-08-21 20:44:13.889383263 +0800
++++ b/vllm/model_executor/kernels/linear/nvfp4/b12x.py	2026-08-21 21:16:17.814509202 +0800
 @@ -0,0 +1,176 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -736,7 +736,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/nvfp4/b12x.py /tmp/t2
 +__all__ = ["B12xNvFp4LinearKernel", "warmup_b12x_nvfp4_linear"]
 diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/scaled_mm/b12x_block.py /tmp/t2/vllm/model_executor/kernels/linear/scaled_mm/b12x_block.py
 --- a/vllm/model_executor/kernels/linear/scaled_mm/b12x_block.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/model_executor/kernels/linear/scaled_mm/b12x_block.py	2026-08-21 20:44:13.889436047 +0800
++++ b/vllm/model_executor/kernels/linear/scaled_mm/b12x_block.py	2026-08-21 21:16:17.814564001 +0800
 @@ -0,0 +1,214 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -954,7 +954,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/scaled_mm/b12x_block.
 +]
 diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor.py /tmp/t2/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor.py
 --- a/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor.py	2026-08-21 20:44:13.889461279 +0800
++++ b/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor.py	2026-08-21 21:16:17.814592721 +0800
 @@ -0,0 +1,238 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -1196,7 +1196,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor
 +]
 diff -ruN /tmp/pristine/vllm/model_executor/layers/fused_moe/b12x.py /tmp/t2/vllm/model_executor/layers/fused_moe/b12x.py
 --- a/vllm/model_executor/layers/fused_moe/b12x.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/model_executor/layers/fused_moe/b12x.py	2026-08-21 20:44:13.892274749 +0800
++++ b/vllm/model_executor/layers/fused_moe/b12x.py	2026-08-21 21:16:17.815821422 +0800
 @@ -0,0 +1,770 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -1970,7 +1970,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/fused_moe/b12x.py /tmp/t2/vll
 +        raise NotImplementedError("LoRA is not supported for B12xExperts")
 diff -ruN /tmp/pristine/vllm/model_executor/layers/fused_moe/config.py /tmp/t2/vllm/model_executor/layers/fused_moe/config.py
 --- a/vllm/model_executor/layers/fused_moe/config.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/layers/fused_moe/config.py	2026-08-21 20:44:13.892362973 +0800
++++ b/vllm/model_executor/layers/fused_moe/config.py	2026-08-21 21:16:17.815907006 +0800
 @@ -861,6 +861,8 @@
      g2_alphas: torch.Tensor,
      w1_scale: torch.Tensor,
@@ -1991,7 +1991,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/fused_moe/config.py /tmp/t2/v
  
 diff -ruN /tmp/pristine/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py /tmp/t2/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py
 --- a/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py	2026-08-21 20:44:13.892476526 +0800
++++ b/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py	2026-08-21 21:16:17.816016205 +0800
 @@ -6,6 +6,7 @@
  import torch
  
@@ -2179,7 +2179,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py /tm
          Mxfp4MoeBackend.TRITON,
 diff -ruN /tmp/pristine/vllm/model_executor/layers/fused_moe/oracle/nvfp4.py /tmp/t2/vllm/model_executor/layers/fused_moe/oracle/nvfp4.py
 --- a/vllm/model_executor/layers/fused_moe/oracle/nvfp4.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/layers/fused_moe/oracle/nvfp4.py	2026-08-21 20:44:13.892632159 +0800
++++ b/vllm/model_executor/layers/fused_moe/oracle/nvfp4.py	2026-08-21 21:16:17.816183293 +0800
 @@ -6,6 +6,7 @@
  
  import vllm.envs as envs
@@ -2316,7 +2316,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/fused_moe/oracle/nvfp4.py /tm
          from vllm.model_executor.layers.quantization.utils.humming_utils import (
 diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_mxfp4.py /tmp/t2/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_mxfp4.py
 --- a/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_mxfp4.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_mxfp4.py	2026-08-21 20:44:13.892742543 +0800
++++ b/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_mxfp4.py	2026-08-21 21:16:17.816304604 +0800
 @@ -25,9 +25,11 @@
      XPUExpertsMxFp4,
  )
@@ -2377,7 +2377,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/compressed_tenso
          self,
 diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_nvfp4.py /tmp/t2/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_nvfp4.py
 --- a/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_nvfp4.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_nvfp4.py	2026-08-21 20:44:13.892785135 +0800
++++ b/vllm/model_executor/layers/quantization/compressed_tensors/compressed_tensors_moe/compressed_tensors_moe_w4a4_nvfp4.py	2026-08-21 21:16:17.816347612 +0800
 @@ -43,6 +43,7 @@
      ):
          super().__init__(moe)
@@ -2404,7 +2404,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/compressed_tenso
      def apply_monolithic(
 diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/inc/schemes/inc_mxfp4_moe.py /tmp/t2/vllm/model_executor/layers/quantization/inc/schemes/inc_mxfp4_moe.py
 --- a/vllm/model_executor/layers/quantization/inc/schemes/inc_mxfp4_moe.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/layers/quantization/inc/schemes/inc_mxfp4_moe.py	2026-08-21 20:44:13.892837824 +0800
++++ b/vllm/model_executor/layers/quantization/inc/schemes/inc_mxfp4_moe.py	2026-08-21 21:16:17.816400556 +0800
 @@ -24,6 +24,7 @@
      FusedMoEMethodBase,
  )
@@ -2484,7 +2484,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/inc/schemes/inc_
          self,
 diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/modelopt.py /tmp/t2/vllm/model_executor/layers/quantization/modelopt.py
 --- a/vllm/model_executor/layers/quantization/modelopt.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/layers/quantization/modelopt.py	2026-08-21 20:44:13.892939104 +0800
++++ b/vllm/model_executor/layers/quantization/modelopt.py	2026-08-21 21:16:17.816502316 +0800
 @@ -1576,6 +1576,7 @@
              w2_scale_2=layer.w2_weight_scale_2,
              a2_scale=layer.w2_input_scale,
@@ -2503,7 +2503,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/modelopt.py /tmp
      @property
 diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/mxfp4.py /tmp/t2/vllm/model_executor/layers/quantization/mxfp4.py
 --- a/vllm/model_executor/layers/quantization/mxfp4.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/layers/quantization/mxfp4.py	2026-08-21 20:44:13.893071313 +0800
++++ b/vllm/model_executor/layers/quantization/mxfp4.py	2026-08-21 21:16:17.816623035 +0800
 @@ -388,6 +388,7 @@
                  routing_tables=layer._expert_routing_tables(),
                  layer=layer,
@@ -2522,7 +2522,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/mxfp4.py /tmp/t2
          # K3's AITER A16W4 kernel wants the separated ([gate_all, up_all])
 diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/quark/quark_moe.py /tmp/t2/vllm/model_executor/layers/quantization/quark/quark_moe.py
 --- a/vllm/model_executor/layers/quantization/quark/quark_moe.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/layers/quantization/quark/quark_moe.py	2026-08-21 20:44:13.893227649 +0800
++++ b/vllm/model_executor/layers/quantization/quark/quark_moe.py	2026-08-21 21:16:17.816765787 +0800
 @@ -1340,6 +1340,7 @@
                  experts_cls=self.experts_cls,
                  routing_tables=layer._expert_routing_tables(),
@@ -2533,7 +2533,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/quark/quark_moe.
          self, layer: RoutedExperts
 diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/utils/b12x_moe.py /tmp/t2/vllm/model_executor/layers/quantization/utils/b12x_moe.py
 --- a/vllm/model_executor/layers/quantization/utils/b12x_moe.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/model_executor/layers/quantization/utils/b12x_moe.py	2026-08-21 20:44:13.893306994 +0800
++++ b/vllm/model_executor/layers/quantization/utils/b12x_moe.py	2026-08-21 21:16:17.816841355 +0800
 @@ -0,0 +1,108 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -2645,7 +2645,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/layers/quantization/utils/b12x_moe.p
 +    return w13, w13_scale, w13_scale_2, a13_scale, w2, w2_scale, w2_scale_2, a2_scale
 diff -ruN /tmp/pristine/vllm/model_executor/warmup/b12x_warmup.py /tmp/t2/vllm/model_executor/warmup/b12x_warmup.py
 --- a/vllm/model_executor/warmup/b12x_warmup.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/model_executor/warmup/b12x_warmup.py	2026-08-21 20:44:13.893351458 +0800
++++ b/vllm/model_executor/warmup/b12x_warmup.py	2026-08-21 21:16:17.816885563 +0800
 @@ -0,0 +1,60 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -2709,7 +2709,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/warmup/b12x_warmup.py /tmp/t2/vllm/m
 +            )
 diff -ruN /tmp/pristine/vllm/model_executor/warmup/kernel_warmup.py /tmp/t2/vllm/model_executor/warmup/kernel_warmup.py
 --- a/vllm/model_executor/warmup/kernel_warmup.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/model_executor/warmup/kernel_warmup.py	2026-08-21 20:44:13.889564271 +0800
++++ b/vllm/model_executor/warmup/kernel_warmup.py	2026-08-21 21:16:17.814697649 +0800
 @@ -12,6 +12,7 @@
  
  import vllm.envs as envs
@@ -2749,7 +2749,7 @@ diff -ruN /tmp/pristine/vllm/model_executor/warmup/kernel_warmup.py /tmp/t2/vllm
      enable_flashinfer_autotune = (
 diff -ruN /tmp/pristine/vllm/models/deepseek_v4/attention.py /tmp/t2/vllm/models/deepseek_v4/attention.py
 --- a/vllm/models/deepseek_v4/attention.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/models/deepseek_v4/attention.py	2026-08-21 20:44:13.742251245 +0800
++++ b/vllm/models/deepseek_v4/attention.py	2026-08-21 21:16:17.810439918 +0800
 @@ -87,6 +87,19 @@
      )
  
@@ -2787,39 +2787,53 @@ diff -ruN /tmp/pristine/vllm/models/deepseek_v4/attention.py /tmp/t2/vllm/models
          assert kv_cache_dtype.startswith("fp8"), (
              f"DeepseekV4 fp8_ds_mla layout only supports fp8 kv-cache, "
              f"got {kv_cache_dtype}"
-@@ -660,7 +683,10 @@
+@@ -660,7 +683,11 @@
          # fp8_ds_mla is a UE8M0 block-scaled uint8 layout and needs 576B
          # alignment; plain bf16 / per-tensor fp8 rows use natural element-size
          # pages.
 -        uses_fp8_ds_mla_layout = self.kv_cache_dtype == "fp8_ds_mla"
-+        uses_fp8_ds_mla_layout = self.kv_cache_dtype in (
++        _dsv4_cache_dtype = self.kv_cache_dtype
++        uses_fp8_ds_mla_layout = _dsv4_cache_dtype in (
 +            "fp8_ds_mla",
 +            "nvfp4_ds_mla",
 +        )
          return MLAAttentionSpec(
              block_size=vllm_config.cache_config.block_size,
              num_kv_heads=1,
-@@ -668,7 +694,7 @@
+@@ -668,7 +695,7 @@
              dtype=torch.uint8 if uses_fp8_ds_mla_layout else self.kv_cache_torch_dtype,
              compress_ratio=self.compress_ratio,
              cache_dtype_str=self.kv_cache_dtype,
 -            alignment=576 if uses_fp8_ds_mla_layout else 512,
-+            alignment=_dsv4_page_alignment(self.kv_cache_dtype),
++            alignment=_dsv4_page_alignment(_dsv4_cache_dtype),
              model_version="deepseek_v4",
              kv_quant_mode=get_kv_quant_mode(self.kv_cache_dtype),
          )
-@@ -706,7 +732,7 @@
+@@ -698,7 +725,11 @@
+     def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec:
+         # head_dim already carries the fp8 scale padding
+         # compress_ratio=1 for V3.2, >1 for DeepseekV4; both use the same cache layout.
+-        uses_fp8_ds_mla_layout = vllm_config.cache_config.cache_dtype == "fp8_ds_mla"
++        _dsv4_cache_dtype = vllm_config.cache_config.cache_dtype
++        uses_fp8_ds_mla_layout = _dsv4_cache_dtype in (
++            "fp8_ds_mla",
++            "nvfp4_ds_mla",
++        )
+         return MLAAttentionSpec(
+             block_size=self.cache_config.block_size,
+             num_kv_heads=1,
+@@ -706,7 +737,7 @@
              dtype=self.dtype,
              compress_ratio=self.compress_ratio,
              # 576B for FlashMLA packing; 512B for FlashInfer sparse (#44577).
 -            alignment=576 if uses_fp8_ds_mla_layout else 512,
-+            alignment=_dsv4_page_alignment(self.kv_cache_dtype),
++            alignment=_dsv4_page_alignment(_dsv4_cache_dtype),
          )
  
      def forward(self): ...
 diff -ruN /tmp/pristine/vllm/models/deepseek_v4/sparse_mla.py /tmp/t2/vllm/models/deepseek_v4/sparse_mla.py
 --- a/vllm/models/deepseek_v4/sparse_mla.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/models/deepseek_v4/sparse_mla.py	2026-08-21 20:44:13.743056161 +0800
++++ b/vllm/models/deepseek_v4/sparse_mla.py	2026-08-21 21:16:17.810514397 +0800
 @@ -100,7 +100,7 @@
          head_size: int,
          cache_dtype_str: str = "auto",
@@ -2831,7 +2845,7 @@ diff -ruN /tmp/pristine/vllm/models/deepseek_v4/sparse_mla.py /tmp/t2/vllm/model
              return (num_blocks, block_size, 584)
 diff -ruN /tmp/pristine/vllm/utils/b12x.py /tmp/t2/vllm/utils/b12x.py
 --- a/vllm/utils/b12x.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/utils/b12x.py	2026-08-21 21:04:19.006543898 +0800
++++ b/vllm/utils/b12x.py	2026-08-21 21:16:17.839463608 +0800
 @@ -0,0 +1,112 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
@@ -2841,7 +2855,7 @@ diff -ruN /tmp/pristine/vllm/utils/b12x.py /tmp/t2/vllm/utils/b12x.py
 +import importlib
 +import importlib.util
 +from collections.abc import Iterable, Callable, Hashable
-+from dataclasses import fields, is_dataclass
++from dataclasses import fields, is_dataclass, dataclass
 +from types import ModuleType
 +from typing import Any
 +
@@ -2945,10 +2959,9 @@ diff -ruN /tmp/pristine/vllm/utils/b12x.py /tmp/t2/vllm/utils/b12x.py
 +        return replacement
 +    _copy_packed_tensors(current, replacement)
 +    return current
-Binary files /tmp/pristine/vllm/utils/__pycache__/b12x.cpython-312.pyc and /tmp/t2/vllm/utils/__pycache__/b12x.cpython-312.pyc differ
 diff -ruN /tmp/pristine/vllm/utils/torch_utils.py /tmp/t2/vllm/utils/torch_utils.py
 --- a/vllm/utils/torch_utils.py	2026-08-11 17:20:03.000000000 +0800
-+++ b/vllm/utils/torch_utils.py	2026-08-21 20:44:13.793160999 +0800
++++ b/vllm/utils/torch_utils.py	2026-08-21 21:16:17.809894015 +0800
 @@ -44,6 +44,7 @@
      "fp8_per_token_head": torch.uint8,
      "fp8_inc": torch.float8_e4m3fn,
@@ -2959,7 +2972,7 @@ diff -ruN /tmp/pristine/vllm/utils/torch_utils.py /tmp/t2/vllm/utils/torch_utils
      "turboquant_k3v4_nc": torch.uint8,
 diff -ruN /tmp/pristine/vllm/v1/attention/backends/mla/flashmla_sparse.py /tmp/t2/vllm/v1/attention/backends/mla/flashmla_sparse.py
 --- a/vllm/v1/attention/backends/mla/flashmla_sparse.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/v1/attention/backends/mla/flashmla_sparse.py	2026-08-21 20:44:13.793970427 +0800
++++ b/vllm/v1/attention/backends/mla/flashmla_sparse.py	2026-08-21 21:16:17.810088287 +0800
 @@ -135,7 +135,7 @@
          head_size: int,
          cache_dtype_str: str = "auto",
@@ -3004,7 +3017,7 @@ diff -ruN /tmp/pristine/vllm/v1/attention/backends/mla/flashmla_sparse.py /tmp/t
              attn_out = self._forward_bf16_kv(
 diff -ruN /tmp/pristine/vllm/v1/attention/backends/mla/sparse_swa.py /tmp/t2/vllm/v1/attention/backends/mla/sparse_swa.py
 --- a/vllm/v1/attention/backends/mla/sparse_swa.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/v1/attention/backends/mla/sparse_swa.py	2026-08-21 20:44:13.794249500 +0800
++++ b/vllm/v1/attention/backends/mla/sparse_swa.py	2026-08-21 21:16:17.810342190 +0800
 @@ -87,7 +87,7 @@
      def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec:
          # fp8_ds_mla's UE8M0 paged layout needs 576B alignment; contiguous
@@ -3025,7 +3038,7 @@ diff -ruN /tmp/pristine/vllm/v1/attention/backends/mla/sparse_swa.py /tmp/t2/vll
              return (num_blocks, block_size, 584)
 diff -ruN /tmp/pristine/vllm/v1/kv_cache_interface.py /tmp/t2/vllm/v1/kv_cache_interface.py
 --- a/vllm/v1/kv_cache_interface.py	2026-08-11 17:20:02.000000000 +0800
-+++ b/vllm/v1/kv_cache_interface.py	2026-08-21 20:44:13.795889828 +0800
++++ b/vllm/v1/kv_cache_interface.py	2026-08-21 21:16:17.809984447 +0800
 @@ -406,7 +406,7 @@
  
      @property
