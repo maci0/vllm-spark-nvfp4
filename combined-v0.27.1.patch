@@ -2831,8 +2831,8 @@ diff -ruN /tmp/pristine/vllm/models/deepseek_v4/sparse_mla.py /tmp/t2/vllm/model
              return (num_blocks, block_size, 584)
 diff -ruN /tmp/pristine/vllm/utils/b12x.py /tmp/t2/vllm/utils/b12x.py
 --- a/vllm/utils/b12x.py	1970-01-01 07:30:00.000000000 +0730
-+++ b/vllm/utils/b12x.py	2026-08-21 20:44:13.893385922 +0800
-@@ -0,0 +1,105 @@
++++ b/vllm/utils/b12x.py	2026-08-21 21:04:19.006543898 +0800
+@@ -0,0 +1,112 @@
 +# SPDX-License-Identifier: Apache-2.0
 +# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
 +"""Lazy accessors for the optional ``b12x`` package."""
@@ -2840,12 +2840,19 @@ diff -ruN /tmp/pristine/vllm/utils/b12x.py /tmp/t2/vllm/utils/b12x.py
 +import functools
 +import importlib
 +import importlib.util
-+from collections.abc import Iterable
++from collections.abc import Iterable, Callable, Hashable
 +from dataclasses import fields, is_dataclass
 +from types import ModuleType
 +from typing import Any
 +
 +import torch
++
++
++@dataclass(frozen=True)
++class B12xWarmupUnit:
++    name: str
++    key: Hashable
++    compile: Callable[[], None]
 +
 +
 +@functools.cache
@@ -2938,6 +2945,7 @@ diff -ruN /tmp/pristine/vllm/utils/b12x.py /tmp/t2/vllm/utils/b12x.py
 +        return replacement
 +    _copy_packed_tensors(current, replacement)
 +    return current
+Binary files /tmp/pristine/vllm/utils/__pycache__/b12x.cpython-312.pyc and /tmp/t2/vllm/utils/__pycache__/b12x.cpython-312.pyc differ
 diff -ruN /tmp/pristine/vllm/utils/torch_utils.py /tmp/t2/vllm/utils/torch_utils.py
 --- a/vllm/utils/torch_utils.py	2026-08-11 17:20:03.000000000 +0800
 +++ b/vllm/utils/torch_utils.py	2026-08-21 20:44:13.793160999 +0800

@@ -182,7 +182,9 @@ clear the assertion here; the linear backend mattered.
 - **SSD KV offload.** `OffloadingConnector` with an `fs_python` disk tier dies
   with a CUDA illegal memory access on this model, with and without b12x
   attention. Not worked around: that class of bug can corrupt output silently
-  rather than crash.
+  rather than crash. Root cause and the upstream fix are documented in
+  [KV_OFFLOAD_MLA.md](KV_OFFLOAD_MLA.md); the diagnosability half is submitted as
+  [vllm-project/vllm#53271](https://github.com/vllm-project/vllm/pull/53271).
 
 ## Upstreaming
 
