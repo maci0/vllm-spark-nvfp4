@@ -34,6 +34,8 @@ instead, so the lineage is auditable.
 | 3 | NVFP4 MLA KV patch | **ours**, 191 lines, 7 files | no upstream PR exists |
 | 4 | b12x dense linear | vllm-project/vllm **PR #52016** | **merged** upstream Aug 14 |
 | 5 | b12x FP4/MXFP4 MoE | vllm-project/vllm **PR #52018** | **open**, `local-inference-lab:dev/b12x-moe` |
+| 6 | mHC DeepGEMM guard | vllm-project/vllm **PR #50645** | **open**; without it the worker dies on sm121, see [MHC_DEEPGEMM_SM121.md](MHC_DEEPGEMM_SM121.md) |
+| 7 | KV-offload bounds check | vllm-project/vllm **PR #53271** (ours) | **open**; diagnosability only, see [KV_OFFLOAD_MLA.md](KV_OFFLOAD_MLA.md) |
 
 Items 3-5 ship as one verified diff, `combined-v0.27.1.patch`
 (29 files, 3038 lines, applies to pristine v0.27.1 with exit 0). The individual

@@ -44,6 +44,76 @@ diff -ruN /tmp/pristine/vllm/config/kernel.py /tmp/t2/vllm/config/kernel.py
      - "marlin": Use Marlin kernels
      - "triton": Use Triton-based kernels
      - "deep_gemm": Use DeepGEMM kernels
+diff -ruN /tmp/pristine/vllm/distributed/kv_transfer/kv_connector/v1/offloading/worker.py /tmp/t2/vllm/distributed/kv_transfer/kv_connector/v1/offloading/worker.py
+--- a/vllm/distributed/kv_transfer/kv_connector/v1/offloading/worker.py	2026-08-11 17:20:02.000000000 +0800
++++ b/vllm/distributed/kv_transfer/kv_connector/v1/offloading/worker.py	2026-08-21 21:36:43.119457248 +0800
+@@ -38,6 +38,51 @@
+ logger = init_logger(__name__)
+ 
+ 
++
++def _validate_canonical_view(
++    layer_name: str,
++    layer_kv_cache: torch.Tensor,
++    num_blocks: int,
++    page: int,
++    block_stride_bytes: int,
++    byte_offset: int,
++) -> None:
++    """Check the (num_blocks, page) byte view fits the layer's real allocation.
++
++    ``torch.as_strided`` does not bounds check, so a stride that does not match
++    the underlying layout silently produces a view extending past the storage.
++    The failure then surfaces much later as a CUDA illegal memory access inside
++    the copy kernel, or as silently transferred wrong bytes.
++
++    Two conditions are checked:
++
++    * the assumed per-block stride matches the tensor's real stride, which it
++      will not when pages carry alignment padding;
++    * the last addressed byte lies inside the storage.
++    """
++    elem_size = layer_kv_cache.element_size()
++    real_stride_bytes = layer_kv_cache.stride(0) * elem_size
++    if num_blocks > 0 and real_stride_bytes != block_stride_bytes:
++        raise ValueError(
++            f"KV offload: layer {layer_name!r} has a per-block stride of "
++            f"{real_stride_bytes} bytes but the canonical view assumes "
++            f"{block_stride_bytes}. This usually means the KV pages carry "
++            f"alignment padding that page_size_bytes does not describe "
++            f"(shape={tuple(layer_kv_cache.shape)}, dtype={layer_kv_cache.dtype})."
++        )
++
++    storage_bytes = layer_kv_cache.untyped_storage().nbytes()
++    if num_blocks > 0:
++        last_byte = byte_offset + (num_blocks - 1) * block_stride_bytes + page
++        if last_byte > storage_bytes:
++            raise ValueError(
++                f"KV offload: canonical view for layer {layer_name!r} would "
++                f"address {last_byte} bytes of a {storage_bytes}-byte storage "
++                f"(num_blocks={num_blocks}, page={page}, "
++                f"stride={block_stride_bytes}, offset={byte_offset})."
++            )
++
++
+ class OffloadingConnectorWorker:
+     """Implementation of Worker side methods"""
+ 
+@@ -117,6 +162,14 @@
+                         dtype=torch.int8,
+                         device=layer_kv_cache.device,
+                     ).set_(layer_kv_cache.untyped_storage())
++                    _validate_canonical_view(
++                        layer_name,
++                        layer_kv_cache,
++                        num_blocks,
++                        page,
++                        block_stride_bytes,
++                        byte_offset,
++                    )
+                     tensors_per_block[layer_name] = (
+                         torch.as_strided(
+                             raw,
 diff -ruN /tmp/pristine/vllm/envs.py /tmp/t2/vllm/envs.py
 --- a/vllm/envs.py	2026-08-11 17:20:02.000000000 +0800
 +++ b/vllm/envs.py	2026-08-21 21:16:17.815652078 +0800
@@ -1194,6 +1264,63 @@ diff -ruN /tmp/pristine/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor
 +    "B12xTensorFP8ScaledMMLinearKernel",
 +    "warmup_b12x_tensor_fp8_linear",
 +]
+diff -ruN /tmp/pristine/vllm/model_executor/kernels/mhc/tilelang.py /tmp/t2/vllm/model_executor/kernels/mhc/tilelang.py
+--- a/vllm/model_executor/kernels/mhc/tilelang.py	2026-08-11 17:20:02.000000000 +0800
++++ b/vllm/model_executor/kernels/mhc/tilelang.py	2026-08-21 21:43:47.509188028 +0800
+@@ -348,7 +348,13 @@
+     residual_flat = residual
+     num_tokens = residual.shape[0]
+ 
+-    n_splits = compute_num_split(64, hidden_size, cdiv(num_tokens, 64))
++    from vllm.utils.deep_gemm import is_deep_gemm_supported
++
++    use_deep_gemm = is_deep_gemm_supported()
++    if use_deep_gemm:
++        n_splits = compute_num_split(64, hidden_size, cdiv(num_tokens, 64))
++    else:
++        n_splits = 1
+ 
+     residual_out = torch.empty(
+         num_tokens, hc_mult, hidden_size, dtype=torch.bfloat16, device=residual.device
+@@ -369,15 +375,30 @@
+         n_splits, num_tokens, dtype=torch.float32, device=residual.device
+     )
+ 
+-    from vllm.utils.deep_gemm import tf32_hc_prenorm_gemm
++    if use_deep_gemm:
++        from vllm.utils.deep_gemm import tf32_hc_prenorm_gemm
+ 
+-    tf32_hc_prenorm_gemm(
+-        residual_flat,
+-        fn_broadcast,
+-        gemm_out_mul,
+-        gemm_out_sqrsum,
+-        n_splits,
+-    )
++        tf32_hc_prenorm_gemm(
++            residual_flat,
++            fn_broadcast,
++            gemm_out_mul,
++            gemm_out_sqrsum,
++            n_splits,
++        )
++    else:
++        # Match the guarded siblings (mhc_pre_tilelang and
++        # mhc_fused_post_pre_tilelang): DeepGEMM is Hopper+-only, so fall back
++        # to the TileLang prenorm GEMM. The broadcast residual is hc_mult
++        # copies of residual_flat, so the GEMM runs against the pre-summed
++        # fn_broadcast with a single hidden-size-wide block.
++        _tilelang_hc_prenorm_gemm(
++            residual_flat,
++            fn_broadcast,
++            gemm_out_mul,
++            gemm_out_sqrsum,
++            hidden_size,
++            1,
++        )
+     mhc_pre_big_fuse_broadcast_with_norm_tilelang(
+         gemm_out_mul,
+         gemm_out_sqrsum,
 diff -ruN /tmp/pristine/vllm/model_executor/layers/fused_moe/b12x.py /tmp/t2/vllm/model_executor/layers/fused_moe/b12x.py
 --- a/vllm/model_executor/layers/fused_moe/b12x.py	1970-01-01 07:30:00.000000000 +0730
 +++ b/vllm/model_executor/layers/fused_moe/b12x.py	2026-08-21 21:16:17.815821422 +0800
@@ -3057,3 +3184,67 @@ diff -ruN /tmp/pristine/vllm/v1/kv_cache_interface.py /tmp/t2/vllm/v1/kv_cache_i
              # DeepseekV4 FlashMLA: 448B NoPE + 128B RoPE + 8B fp8 scale = 584B
              # per token. FlashInfer's contiguous bf16/fp8 cache falls through to
              # the element-size formula below.
+diff -ruN /tmp/pristine/vllm/v1/kv_offload/cpu/gpu_worker.py /tmp/t2/vllm/v1/kv_offload/cpu/gpu_worker.py
+--- a/vllm/v1/kv_offload/cpu/gpu_worker.py	2026-08-11 17:20:02.000000000 +0800
++++ b/vllm/v1/kv_offload/cpu/gpu_worker.py	2026-08-21 21:25:23.940826421 +0800
+@@ -70,6 +70,44 @@
+     batch_sizes: torch.Tensor
+ 
+ 
++
++def _assert_ptrs_within_tensor(
++    ptrs: np.ndarray,
++    tensor: torch.Tensor,
++    max_bytes_per_ptr: int,
++    what: str,
++) -> None:
++    """Verify computed device addresses fall inside ``tensor``'s allocation.
++
++    ``compute_sub_block_ptrs`` derives addresses from ``data_ptr()``,
++    ``stride(0)`` and ``shape[1]``. Those assume a flat, unpadded row layout.
++    A cache whose pages carry alignment padding (for example DeepSeek-V4 MLA,
++    which uses 576B/584B padded uint8 pages) breaks that assumption, and the
++    resulting addresses walk off the buffer. The copy kernel dereferences them
++    without a bounds check, so the failure surfaces as a CUDA illegal memory
++    access, or as silently corrupted KV.
++
++    One min/max over the pointer array per batch is negligible next to the
++    transfer itself, and turns an undiagnosable fault into an actionable error.
++    """
++    if ptrs.size == 0:
++        return
++    base = tensor.data_ptr()
++    end = base + tensor.numel() * tensor.element_size()
++    lo = int(ptrs.min())
++    hi = int(ptrs.max()) + max_bytes_per_ptr
++    if lo < base or hi > end:
++        raise ValueError(
++            f"KV offload computed out-of-bounds {what} addresses: "
++            f"[{lo:#x}, {hi:#x}) escapes tensor allocation "
++            f"[{base:#x}, {end:#x}) "
++            f"(shape={tuple(tensor.shape)}, dtype={tensor.dtype}, "
++            f"stride0={tensor.stride(0)}). This usually means the KV cache "
++            f"layout is not the flat unpadded row layout this transfer path "
++            f"assumes, e.g. a paged layout with per-page alignment padding."
++        )
++
++
+ def compute_sub_block_ptrs(
+     block_ids: np.ndarray,
+     blocks_per_chunk: int,
+@@ -105,6 +143,7 @@
+     if blocks_per_chunk == 1:
+         # Fast path: 1:1 mapping, no sub-block expansion needed.
+         output[:] = base_ptr + block_ids.astype(np.uint64)[:num_sub_blocks] * row_stride
++        _assert_ptrs_within_tensor(output, tensor, row_stride, "block")
+         return
+ 
+     # Vectorized expansion for blocks_per_chunk > 1.
+@@ -118,6 +157,7 @@
+     # Flatten and apply skip_count / truncation
+     flat = all_ptrs.ravel()
+     output[:] = flat[skip_count : skip_count + num_sub_blocks]
++    _assert_ptrs_within_tensor(output, tensor, block_page_size, "sub-block")
+ 
+ 
+ def pin_mmap_region(region: SharedOffloadRegion) -> None:
