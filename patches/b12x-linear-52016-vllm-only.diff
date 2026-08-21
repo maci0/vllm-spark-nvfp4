@@ -1,0 +1,1373 @@
+diff --git a/vllm/config/kernel.py b/vllm/config/kernel.py
+index 74e959f33ab9..7287c1ce923f 100644
+--- a/vllm/config/kernel.py
++++ b/vllm/config/kernel.py
+@@ -147,6 +147,7 @@ def with_default(
+     "flashinfer_trtllm",
+     "flashinfer_cudnn",
+     "flashinfer_b12x",
++    "b12x",
+     "marlin",
+     "humming",
+     "triton",
+@@ -223,6 +224,7 @@ class KernelConfig:
+     - "flashinfer_trtllm": Use FlashInfer with TensorRT-LLM kernels
+     - "flashinfer_cudnn": Use FlashInfer with cuDNN kernels
+     - "flashinfer_b12x": Use FlashInfer b12x CuteDSL NVFP4 GEMM (SM120+)
++    - "b12x": Use native B12X FP8 and FP4 linear kernels on SM12x
+     - "marlin": Use Marlin kernels
+     - "triton": Use Triton-based kernels
+     - "deep_gemm": Use DeepGEMM kernels
+diff --git a/vllm/model_executor/kernels/linear/__init__.py b/vllm/model_executor/kernels/linear/__init__.py
+index 9915255a847d..3413d4a69fa9 100644
+--- a/vllm/model_executor/kernels/linear/__init__.py
++++ b/vllm/model_executor/kernels/linear/__init__.py
+@@ -77,6 +77,9 @@
+ from vllm.model_executor.kernels.linear.mxfp4.aiter import (
+     AiterMxfp4LinearKernel,
+ )
++from vllm.model_executor.kernels.linear.mxfp4.b12x import (
++    B12xMxFp4LinearKernel,
++)
+ from vllm.model_executor.kernels.linear.mxfp4.emulation import (
+     EmulationMxfp4LinearKernel,
+ )
+@@ -103,6 +106,9 @@
+     Mxfp8LinearKernel,
+     Mxfp8LinearLayerConfig,
+ )
++from vllm.model_executor.kernels.linear.mxfp8.b12x import (
++    B12xMxfp8LinearKernel,
++)
+ from vllm.model_executor.kernels.linear.mxfp8.emulation import (
+     EmulationMxfp8LinearKernel,
+ )
+@@ -126,6 +132,9 @@
+     NvFp4LinearKernel,
+     NvFp4LinearLayerConfig,
+ )
++from vllm.model_executor.kernels.linear.nvfp4.b12x import (
++    B12xNvFp4LinearKernel,
++)
+ from vllm.model_executor.kernels.linear.nvfp4.cutlass import (
+     CutlassNvFp4LinearKernel,
+ )
+@@ -163,6 +172,12 @@
+     AiterPerTokenFp8ScaledMMLinearKernel,
+     AiterPreshuffledPerTokenFp8ScaledMMLinearKernel,
+ )
++from vllm.model_executor.kernels.linear.scaled_mm.b12x_block import (
++    B12xFp8BlockScaledMMKernel,
++)
++from vllm.model_executor.kernels.linear.scaled_mm.b12x_tensor import (
++    B12xTensorFP8ScaledMMLinearKernel,
++)
+ from vllm.model_executor.kernels.linear.scaled_mm.cpu import (
+     CPUFp8BlockScaledMMKernel,
+     CPUInt8ScaledMMLinearKernel,
+@@ -228,6 +243,13 @@ def _get_linear_backend() -> str:
+ # set are considered candidates. If none can implement the layer config,
+ # an error is raised to respect the user's explicit intent.
+ _LINEAR_BACKEND_KERNEL_MAP: dict[str, set[type]] = {
++    "b12x": {
++        B12xFp8BlockScaledMMKernel,
++        B12xMxFp4LinearKernel,
++        B12xMxfp8LinearKernel,
++        B12xNvFp4LinearKernel,
++        B12xTensorFP8ScaledMMLinearKernel,
++    },
+     "cutlass": {
+         CutlassInt8ScaledMMLinearKernel,
+         CutlassFP8ScaledMMLinearKernel,
+@@ -377,6 +399,7 @@ def _resolve_backend_kernels(
+         MarlinFP8ScaledMMLinearKernel,
+         FlashInferFP8ScaledMMLinearKernel,
+         CutlassFP8ScaledMMLinearKernel,
++        B12xTensorFP8ScaledMMLinearKernel,
+         PerTensorTorchFP8ScaledMMLinearKernel,
+         ChannelWiseTorchFP8ScaledMMLinearKernel,
+         HummingFP8ScaledMMLinearKernel,
+@@ -411,6 +434,7 @@ def _resolve_backend_kernels(
+         FlashInferFp8DeepGEMMDynamicBlockScaledKernel,
+         DeepGemmFp8BlockScaledMMKernel,
+         CutlassFp8BlockScaledMMKernel,
++        B12xFp8BlockScaledMMKernel,
+         MarlinFP8ScaledMMLinearKernel,
+         TritonFp8BlockScaledMMKernel,
+         HummingFP8ScaledMMLinearKernel,
+@@ -482,6 +506,7 @@ def _resolve_backend_kernels(
+         FlashInferCutedslMxfp8LinearKernel,
+         FlashInferCutlassMxfp8LinearKernel,
+         MarlinMxfp8LinearKernel,
++        B12xMxfp8LinearKernel,
+         EmulationMxfp8LinearKernel,
+         HummingMxfp8LinearKernel,
+     ],
+@@ -507,6 +532,7 @@ def _resolve_backend_kernels(
+         FlashInferTrtllmNvFp4LinearKernel,
+         FlashInferCudnnNvFp4LinearKernel,
+         FbgemmNvFp4LinearKernel,
++        B12xNvFp4LinearKernel,
+         EmulationNvFp4LinearKernel,
+         HummingNvFp4LinearKernel,
+     ],
+@@ -529,6 +555,7 @@ def _resolve_backend_kernels(
+         FlashInferMxFp4LinearKernel,
+         MarlinMxFp4LinearKernel,
+         HummingMxFp4LinearKernel,
++        B12xMxFp4LinearKernel,
+         EmulationMxfp4LinearKernel,
+     ],
+     PlatformEnum.ROCM: [
+@@ -1175,6 +1202,9 @@ def register_linear_kernel(
+     "init_mxfp8_linear_kernel",
+     "Mxfp8LinearKernel",
+     "Mxfp8LinearLayerConfig",
++    "B12xMxfp8LinearKernel",
++    "B12xMxFp4LinearKernel",
++    "B12xNvFp4LinearKernel",
+     "init_mxfp4_linear_kernel",
+     "MxFp4LinearKernel",
+     "MxFp4LinearLayerConfig",
+@@ -1203,4 +1233,6 @@ def register_linear_kernel(
+     "_KernelT",
+     "DeepGemmFp8BlockScaledMMKernel",
+     "FlashInferFp8DeepGEMMDynamicBlockScaledKernel",
++    "B12xFp8BlockScaledMMKernel",
++    "B12xTensorFP8ScaledMMLinearKernel",
+ ]
+diff --git a/vllm/model_executor/kernels/linear/mxfp4/b12x.py b/vllm/model_executor/kernels/linear/mxfp4/b12x.py
+new file mode 100644
+index 000000000000..93e872c0680c
+--- /dev/null
++++ b/vllm/model_executor/kernels/linear/mxfp4/b12x.py
+@@ -0,0 +1,170 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++from __future__ import annotations
++
++from collections.abc import Iterable
++from typing import Any
++
++import torch
++
++from vllm.model_executor.layers.quantization.utils.quant_utils import (
++    kMxfp4Dynamic,
++)
++from vllm.model_executor.utils import replace_parameter
++from vllm.platforms import current_platform
++from vllm.utils.b12x import (
++    b12x_warmup_token_counts,
++)
++from vllm.utils.b12x import (
++    get_b12x_blockscaled as _import_b12x_blockscaled,
++)
++from vllm.utils.b12x import get_b12x_intrinsics as _import_b12x_intrinsics
++
++from .base import MxFp4LinearKernel, MxFp4LinearLayerConfig
++
++
++def _apply_b12x_mxfp4_linear(
++    x: torch.Tensor,
++    weight: torch.Tensor,
++    weight_scale_storage: torch.Tensor,
++    bias: torch.Tensor | None,
++) -> torch.Tensor:
++    from vllm.utils.flashinfer import flashinfer_mxfp4_quantize
++
++    blockscaled = _import_b12x_blockscaled()
++    assert blockscaled is not None
++
++    output_size = int(weight.shape[0])
++    output_shape = [*x.shape[:-1], output_size]
++    x_2d = x.reshape(-1, x.shape[-1]).contiguous()
++    x_packed, x_scale_swizzled = flashinfer_mxfp4_quantize(x_2d, backend="cute-dsl")
++    output = blockscaled.mm_mxfp4(
++        x_packed,
++        x_scale_swizzled,
++        weight,
++        weight_scale_storage,
++        out_dtype=x.dtype,
++    )
++    if bias is not None:
++        output = output + bias
++    return output.view(*output_shape)
++
++
++def warmup_b12x_mxfp4_linear(
++    model: torch.nn.Module,
++    *,
++    max_tokens: int,
++    cudagraph_capture_sizes: Iterable[int] = (),
++    output_dtype: torch.dtype = torch.bfloat16,
++) -> int:
++    if not current_platform.is_cuda():
++        return 0
++    if not current_platform.is_device_capability_family(120):
++        return 0
++    if output_dtype not in (torch.bfloat16, torch.float16):
++        output_dtype = torch.bfloat16
++    layer_map: dict[tuple[Any, ...], torch.nn.Module] = {}
++    for layer in model.modules():
++        if not getattr(layer, "b12x_mxfp4_linear", False):
++            continue
++        weight = layer.weight
++        weight_scale = layer.weight_scale
++        n, packed_k = map(int, weight.shape)
++        signature = (
++            weight.device,
++            n,
++            packed_k * 2,
++            weight.dtype,
++            weight_scale.dtype,
++            output_dtype,
++        )
++        layer_map.setdefault(signature, layer)
++    if not layer_map:
++        return 0
++    if _import_b12x_blockscaled() is None:
++        return 0
++
++    token_counts = b12x_warmup_token_counts(
++        max_tokens=max_tokens,
++        cudagraph_capture_sizes=cudagraph_capture_sizes,
++    )
++    warmed = 0
++    last_device: torch.device | None = None
++
++    with torch.inference_mode():
++        for signature, layer in layer_map.items():
++            weight = layer.weight
++            weight_scale = layer.weight_scale
++            k = signature[2]
++            last_device = weight.device
++            for tokens in token_counts:
++                source = torch.zeros(
++                    (tokens, k),
++                    dtype=output_dtype,
++                    device=weight.device,
++                )
++                _apply_b12x_mxfp4_linear(
++                    source,
++                    weight,
++                    weight_scale,
++                    None,
++                )
++                warmed += 1
++
++        if warmed > 0 and last_device is not None and last_device.type == "cuda":
++            torch.accelerator.synchronize(last_device)
++
++    return warmed
++
++
++class B12xMxFp4LinearKernel(MxFp4LinearKernel):
++    """MXFP4 linear through the native B12X SM120 dense GEMM."""
++
++    @classmethod
++    def is_supported(
++        cls, compute_capability: int | None = None
++    ) -> tuple[bool, str | None]:
++        del compute_capability
++        if not current_platform.is_cuda():
++            return False, "B12X MXFP4 kernels are only available on CUDA"
++        if not current_platform.is_device_capability_family(120):
++            return False, "B12X MXFP4 kernels require a Blackwell 12x device"
++        blockscaled = _import_b12x_blockscaled()
++        if blockscaled is None or _import_b12x_intrinsics() is None:
++            return False, "Install the B12X backend with `pip install vllm[b12x]`"
++        if not blockscaled.is_supported():
++            return False, "b12x native MXFP4 GEMM is not supported"
++        return True, None
++
++    @classmethod
++    def can_implement(cls, config: MxFp4LinearLayerConfig) -> tuple[bool, str | None]:
++        if config.activation_quant_key != kMxfp4Dynamic:
++            return False, "B12X MXFP4 GEMM requires dynamic MXFP4 activations"
++        return True, None
++
++    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
++        intrinsics = _import_b12x_intrinsics()
++        assert intrinsics is not None
++        replace_parameter(
++            layer,
++            "weight_scale",
++            intrinsics.swizzle_block_scale(layer.weight_scale.data),
++        )
++        layer.b12x_mxfp4_linear = True
++
++    def apply_weights(
++        self,
++        layer: torch.nn.Module,
++        x: torch.Tensor,
++        bias: torch.Tensor | None = None,
++    ) -> torch.Tensor:
++        return _apply_b12x_mxfp4_linear(
++            x,
++            layer.weight,
++            layer.weight_scale,
++            bias,
++        )
++
++
++__all__ = ["B12xMxFp4LinearKernel", "warmup_b12x_mxfp4_linear"]
+diff --git a/vllm/model_executor/kernels/linear/mxfp8/b12x.py b/vllm/model_executor/kernels/linear/mxfp8/b12x.py
+new file mode 100644
+index 000000000000..4dd77dd6c00e
+--- /dev/null
++++ b/vllm/model_executor/kernels/linear/mxfp8/b12x.py
+@@ -0,0 +1,193 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++from __future__ import annotations
++
++from collections.abc import Iterable
++from typing import Any
++
++import torch
++
++from vllm.model_executor.layers.quantization.utils.mxfp8_utils import (
++    MXFP8_BLOCK_SIZE,
++    MXFP8_SCALE_DTYPE,
++    MXFP8_VALUE_DTYPE,
++)
++from vllm.model_executor.utils import replace_parameter
++from vllm.platforms import current_platform
++from vllm.utils.b12x import (
++    b12x_warmup_token_counts,
++    reuse_packed_weight_storage,
++)
++from vllm.utils.b12x import (
++    get_b12x_mxfp8_linear as _import_b12x_mxfp8,
++)
++from vllm.utils.torch_utils import current_stream
++
++from .Mxfp8LinearKernel import Mxfp8LinearKernel, Mxfp8LinearLayerConfig
++
++
++def _b12x_mxfp8_expected_m(tokens: int) -> int:
++    return max(1, int(tokens))
++
++
++def _apply_b12x_mxfp8_packed_linear(
++    layer: torch.nn.Module,
++    x: torch.Tensor,
++    bias: torch.Tensor | None,
++) -> torch.Tensor:
++    packed_weight = getattr(layer, "b12x_mxfp8_packed_weight", None)
++    if packed_weight is None:
++        raise RuntimeError(
++            "b12x MXFP8 packed weights are missing; "
++            "process_weights_after_loading did not run for this layer"
++        )
++
++    input_2d = x.reshape(-1, x.shape[-1]).contiguous()
++    output_shape = [*x.shape[:-1], int(packed_weight.out_features)]
++
++    mxfp8 = _import_b12x_mxfp8()
++    assert mxfp8 is not None
++    output = mxfp8.mm(
++        input_2d,
++        packed_weight,
++        bias=bias,
++        expected_m=_b12x_mxfp8_expected_m(int(input_2d.shape[0])),
++    )
++    return output.view(*output_shape)
++
++
++def warmup_b12x_mxfp8_linear(
++    model: torch.nn.Module,
++    *,
++    max_tokens: int,
++    cudagraph_capture_sizes: Iterable[int] = (),
++    output_dtype: torch.dtype = torch.bfloat16,
++) -> int:
++    if not current_platform.is_cuda():
++        return 0
++    if not current_platform.is_device_capability_family(120):
++        return 0
++    if output_dtype not in (torch.bfloat16, torch.float16):
++        output_dtype = torch.bfloat16
++
++    layer_map: dict[tuple[Any, ...], Any] = {}
++    for layer in model.modules():
++        packed_weight = getattr(layer, "b12x_mxfp8_packed_weight", None)
++        if packed_weight is None:
++            continue
++        device = torch.device(packed_weight.weight.values.device)
++        signature = (
++            device,
++            int(packed_weight.in_features),
++            int(packed_weight.padded_in_features),
++            int(packed_weight.out_features),
++            output_dtype,
++        )
++        layer_map.setdefault(signature, packed_weight)
++    if not layer_map:
++        return 0
++
++    mxfp8 = _import_b12x_mxfp8()
++    if mxfp8 is None:
++        return 0
++
++    token_counts = b12x_warmup_token_counts(
++        max_tokens=max_tokens,
++        cudagraph_capture_sizes=cudagraph_capture_sizes,
++    )
++    warmed = 0
++    last_device: torch.device | None = None
++
++    with torch.inference_mode():
++        for signature, packed_weight in layer_map.items():
++            device = signature[0]
++            last_device = device
++            for tokens in token_counts:
++                source = torch.zeros(
++                    (tokens, int(packed_weight.in_features)),
++                    dtype=output_dtype,
++                    device=device,
++                )
++                mxfp8.mm(
++                    source,
++                    packed_weight,
++                    expected_m=_b12x_mxfp8_expected_m(tokens),
++                    stream=current_stream().cuda_stream,
++                )
++                warmed += 1
++
++        if warmed > 0 and last_device is not None and last_device.type == "cuda":
++            torch.accelerator.synchronize(last_device)
++
++    return warmed
++
++
++class B12xMxfp8LinearKernel(Mxfp8LinearKernel):
++    """ModelOpt MXFP8 linear through the native b12x SM120 dense GEMM path."""
++
++    @classmethod
++    def is_supported(
++        cls,
++        compute_capability: int | None = None,
++    ) -> tuple[bool, str | None]:
++        del compute_capability
++        if not current_platform.is_cuda():
++            return False, "b12x MXFP8 kernels are only available on CUDA"
++        if not current_platform.is_device_capability_family(120):
++            return False, "b12x MXFP8 kernels require a Blackwell 12x device"
++        mxfp8 = _import_b12x_mxfp8()
++        if mxfp8 is None:
++            return False, "Install the B12X backend with `pip install vllm[b12x]`"
++        if not mxfp8.is_supported():
++            return False, "b12x.gemm.mxfp8_linear is not supported"
++        return True, None
++
++    @classmethod
++    def can_implement(cls, c: Mxfp8LinearLayerConfig) -> tuple[bool, str | None]:
++        del c
++        return True, None
++
++    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
++        weight = layer.weight.data
++        assert weight.dtype == MXFP8_VALUE_DTYPE, (
++            f"b12x MXFP8 requires {MXFP8_VALUE_DTYPE}, got {weight.dtype}"
++        )
++        assert weight.ndim == 2, f"b12x MXFP8 weight must be 2D, got {weight.ndim}D"
++        assert hasattr(layer, "weight_scale"), "b12x MXFP8 linear requires weight_scale"
++
++        out_features, in_features = map(int, weight.shape)
++        assert in_features % MXFP8_BLOCK_SIZE == 0, (
++            "b12x MXFP8 requires input features divisible by "
++            f"{MXFP8_BLOCK_SIZE}, got {in_features}"
++        )
++        weight_scale = layer.weight_scale.data
++        assert weight_scale.dtype == MXFP8_SCALE_DTYPE, (
++            f"b12x MXFP8 requires {MXFP8_SCALE_DTYPE} weight_scale, "
++            f"got {weight_scale.dtype}"
++        )
++        assert weight_scale.ndim == 2, (
++            f"b12x MXFP8 weight_scale must be 2D, got {weight_scale.ndim}D"
++        )
++
++        mxfp8 = _import_b12x_mxfp8()
++        assert mxfp8 is not None
++        scale_k = in_features // MXFP8_BLOCK_SIZE
++        packed_weight = mxfp8.pack_weight(
++            weight[:out_features, :in_features].detach(),
++            weight_scale[:out_features, :scale_k].detach(),
++        )
++        layer.b12x_mxfp8_packed_weight = reuse_packed_weight_storage(
++            getattr(layer, "b12x_mxfp8_packed_weight", None),
++            packed_weight,
++        )
++        replace_parameter(layer, "weight", weight.new_empty((0,)))
++        replace_parameter(layer, "weight_scale", weight_scale.new_empty((0,)))
++
++    def apply_weights(
++        self,
++        layer: torch.nn.Module,
++        x: torch.Tensor,
++        bias: torch.Tensor | None = None,
++    ) -> torch.Tensor:
++        return _apply_b12x_mxfp8_packed_linear(layer, x, bias)
+diff --git a/vllm/model_executor/kernels/linear/nvfp4/b12x.py b/vllm/model_executor/kernels/linear/nvfp4/b12x.py
+new file mode 100644
+index 000000000000..a9e5a69283fc
+--- /dev/null
++++ b/vllm/model_executor/kernels/linear/nvfp4/b12x.py
+@@ -0,0 +1,176 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++from __future__ import annotations
++
++from collections.abc import Iterable
++from typing import Any
++
++import torch
++
++from vllm._custom_ops import scaled_fp4_quant
++from vllm.model_executor.utils import replace_parameter
++from vllm.platforms import current_platform
++from vllm.utils.b12x import (
++    b12x_warmup_token_counts,
++)
++from vllm.utils.b12x import (
++    get_b12x_blockscaled as _import_b12x_blockscaled,
++)
++from vllm.utils.b12x import get_b12x_intrinsics as _import_b12x_intrinsics
++
++from .base import NvFp4LinearKernel, NvFp4LinearLayerConfig
++
++
++def _apply_b12x_nvfp4_linear(
++    x: torch.Tensor,
++    weight: torch.Tensor,
++    weight_scale_storage: torch.Tensor,
++    input_global_scale_inv: torch.Tensor,
++    alpha: torch.Tensor,
++    bias: torch.Tensor | None,
++) -> torch.Tensor:
++    blockscaled = _import_b12x_blockscaled()
++    assert blockscaled is not None
++
++    output_size = int(weight.shape[0])
++    output_shape = [*x.shape[:-1], output_size]
++    x_2d = x.reshape(-1, x.shape[-1])
++    x_packed, x_scale_swizzled = scaled_fp4_quant(
++        x_2d,
++        input_global_scale_inv,
++        is_sf_swizzled_layout=True,
++    )
++    output = blockscaled.mm_nvfp4(
++        x_packed,
++        x_scale_swizzled,
++        weight,
++        weight_scale_storage,
++        alpha,
++        out_dtype=x.dtype,
++    )
++    if bias is not None:
++        output = output + bias
++    return output.view(*output_shape)
++
++
++def warmup_b12x_nvfp4_linear(
++    model: torch.nn.Module,
++    *,
++    max_tokens: int,
++    cudagraph_capture_sizes: Iterable[int] = (),
++    output_dtype: torch.dtype = torch.bfloat16,
++) -> int:
++    if not current_platform.is_cuda():
++        return 0
++    if not current_platform.is_device_capability_family(120):
++        return 0
++    if output_dtype not in (torch.bfloat16, torch.float16):
++        output_dtype = torch.bfloat16
++    layer_map: dict[tuple[Any, ...], torch.nn.Module] = {}
++    for layer in model.modules():
++        if not getattr(layer, "b12x_nvfp4_linear", False):
++            continue
++        weight = layer.weight
++        weight_scale = layer.weight_scale
++        n, packed_k = map(int, weight.shape)
++        signature = (
++            weight.device,
++            n,
++            packed_k * 2,
++            weight.dtype,
++            weight_scale.dtype,
++            output_dtype,
++        )
++        layer_map.setdefault(signature, layer)
++    if not layer_map:
++        return 0
++    if _import_b12x_blockscaled() is None:
++        return 0
++
++    token_counts = b12x_warmup_token_counts(
++        max_tokens=max_tokens,
++        cudagraph_capture_sizes=cudagraph_capture_sizes,
++    )
++    warmed = 0
++    last_device: torch.device | None = None
++
++    with torch.inference_mode():
++        for signature, layer in layer_map.items():
++            weight = layer.weight
++            weight_scale = layer.weight_scale
++            k = signature[2]
++            last_device = weight.device
++            for tokens in token_counts:
++                source = torch.zeros(
++                    (tokens, k),
++                    dtype=output_dtype,
++                    device=weight.device,
++                )
++                _apply_b12x_nvfp4_linear(
++                    source,
++                    weight,
++                    weight_scale,
++                    layer.input_global_scale_inv,
++                    layer.alpha,
++                    None,
++                )
++                warmed += 1
++
++        if warmed > 0 and last_device is not None and last_device.type == "cuda":
++            torch.accelerator.synchronize(last_device)
++
++    return warmed
++
++
++class B12xNvFp4LinearKernel(NvFp4LinearKernel):
++    """ModelOpt NVFP4 linear through the native B12X SM120 dense GEMM."""
++
++    @classmethod
++    def is_supported(
++        cls, compute_capability: int | None = None
++    ) -> tuple[bool, str | None]:
++        del compute_capability
++        if not current_platform.is_cuda():
++            return False, "B12X NVFP4 kernels are only available on CUDA"
++        if not current_platform.is_device_capability_family(120):
++            return False, "B12X NVFP4 kernels require a Blackwell 12x device"
++        blockscaled = _import_b12x_blockscaled()
++        if blockscaled is None or _import_b12x_intrinsics() is None:
++            return False, "Install the B12X backend with `pip install vllm[b12x]`"
++        if not blockscaled.is_supported():
++            return False, "b12x native NVFP4 GEMM is not supported"
++        return True, None
++
++    @classmethod
++    def can_implement(cls, config: NvFp4LinearLayerConfig) -> tuple[bool, str | None]:
++        del config
++        return True, None
++
++    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
++        intrinsics = _import_b12x_intrinsics()
++        assert intrinsics is not None
++        replace_parameter(
++            layer,
++            "weight_scale",
++            intrinsics.swizzle_block_scale(layer.weight_scale.data),
++        )
++        layer.b12x_nvfp4_linear = True
++
++    def apply_weights(
++        self,
++        layer: torch.nn.Module,
++        x: torch.Tensor,
++        bias: torch.Tensor | None = None,
++    ) -> torch.Tensor:
++        return _apply_b12x_nvfp4_linear(
++            x,
++            layer.weight,
++            layer.weight_scale,
++            layer.input_global_scale_inv,
++            layer.alpha,
++            bias,
++        )
++
++
++__all__ = ["B12xNvFp4LinearKernel", "warmup_b12x_nvfp4_linear"]
+diff --git a/vllm/model_executor/kernels/linear/scaled_mm/b12x_block.py b/vllm/model_executor/kernels/linear/scaled_mm/b12x_block.py
+new file mode 100644
+index 000000000000..c2d12549fbde
+--- /dev/null
++++ b/vllm/model_executor/kernels/linear/scaled_mm/b12x_block.py
+@@ -0,0 +1,214 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++from __future__ import annotations
++
++from collections.abc import Iterable
++from typing import Any
++
++import torch
++
++from vllm.model_executor.layers.quantization.utils.fp8_utils import (
++    _upcast_e8m0_to_fp32,
++)
++from vllm.model_executor.layers.quantization.utils.quant_utils import GroupShape
++from vllm.model_executor.utils import replace_parameter
++from vllm.platforms import current_platform
++from vllm.utils.b12x import (
++    b12x_warmup_token_counts,
++)
++from vllm.utils.b12x import (
++    get_b12x_blockscaled as _import_b12x_blockscaled,
++)
++
++from .BlockScaledMMLinearKernel import (
++    Fp8BlockScaledMMLinearKernel,
++    FP8ScaledMMLinearLayerConfig,
++)
++
++
++def _run_b12x_fp8_block_scaled_mm(
++    a: torch.Tensor,
++    weight: torch.Tensor,
++    a_scale: torch.Tensor,
++    weight_scale: torch.Tensor,
++    out_dtype: torch.dtype,
++) -> torch.Tensor:
++    blockscaled = _import_b12x_blockscaled()
++    assert blockscaled is not None
++
++    return blockscaled.mm_block_fp8(
++        a,
++        a_scale,
++        weight,
++        weight_scale,
++        out_dtype=out_dtype,
++    )
++
++
++def warmup_b12x_block_fp8_linear(
++    model: torch.nn.Module,
++    *,
++    max_tokens: int,
++    cudagraph_capture_sizes: Iterable[int] = (),
++    output_dtype: torch.dtype = torch.bfloat16,
++) -> int:
++    if not current_platform.is_cuda():
++        return 0
++    if not current_platform.is_device_capability_family(120):
++        return 0
++    if output_dtype not in (torch.bfloat16, torch.float16):
++        output_dtype = torch.bfloat16
++
++    layer_map: dict[tuple[Any, ...], torch.nn.Module] = {}
++    for layer in model.modules():
++        if not getattr(layer, "b12x_block_fp8_linear", False):
++            continue
++        weight = layer.weight
++        weight_scale = getattr(layer, "weight_scale_inv", None)
++        if weight_scale is None:
++            weight_scale = layer.weight_scale
++        n, k = map(int, weight.shape)
++        signature = (
++            weight.device,
++            n,
++            k,
++            weight.dtype,
++            weight_scale.dtype,
++            output_dtype,
++        )
++        layer_map.setdefault(signature, layer)
++    if not layer_map:
++        return 0
++
++    blockscaled = _import_b12x_blockscaled()
++    if blockscaled is None:
++        return 0
++    token_counts = b12x_warmup_token_counts(
++        max_tokens=max_tokens,
++        cudagraph_capture_sizes=cudagraph_capture_sizes,
++    )
++    warmed = 0
++
++    with torch.inference_mode():
++        for signature, layer in layer_map.items():
++            weight = layer.weight
++            weight_scale = getattr(layer, "weight_scale_inv", None)
++            if weight_scale is None:
++                weight_scale = layer.weight_scale
++            k = signature[2]
++            for tokens in token_counts:
++                a = torch.empty(
++                    (tokens, k),
++                    dtype=weight.dtype,
++                    device=weight.device,
++                )
++                a_scale = torch.empty(
++                    (tokens, k // 128),
++                    dtype=torch.float32,
++                    device=weight.device,
++                )
++                _run_b12x_fp8_block_scaled_mm(
++                    a,
++                    weight,
++                    a_scale,
++                    weight_scale,
++                    output_dtype,
++                )
++                warmed += 1
++    return warmed
++
++
++class B12xFp8BlockScaledMMKernel(Fp8BlockScaledMMLinearKernel):
++    """K128 block-FP8 linear through the native B12X SM120 dense GEMM."""
++
++    @classmethod
++    def is_supported(
++        cls,
++        compute_capability: int | None = None,
++    ) -> tuple[bool, str | None]:
++        del compute_capability
++        if not current_platform.is_cuda():
++            return False, "B12X FP8 kernels are only available on CUDA"
++        if not current_platform.is_device_capability_family(120):
++            return False, "B12X FP8 kernels require a Blackwell 12x device"
++        blockscaled = _import_b12x_blockscaled()
++        if blockscaled is None:
++            return False, "Install the B12X backend with `pip install vllm[b12x]`"
++        if not blockscaled.is_supported():
++            return False, "B12X regular block-FP8 GEMM is not supported"
++        return True, None
++
++    @classmethod
++    def can_implement(
++        cls,
++        config: FP8ScaledMMLinearLayerConfig,
++    ) -> tuple[bool, str | None]:
++        can_implement_base, reason = super().can_implement(config)
++        if not can_implement_base:
++            return can_implement_base, reason
++
++        if config.input_dtype not in (torch.bfloat16, torch.float16):
++            return False, "Supports only bf16/fp16 input dtype"
++        if config.input_dtype != config.out_dtype:
++            return False, "Input and output dtype must match"
++
++        act_group_shape = config.activation_quant_key.scale.group_shape
++        if act_group_shape != GroupShape(1, 128):
++            return (
++                False,
++                "Supports only dynamic per-token group activation quantization "
++                "with group_shape=(1,128)",
++            )
++        weight_group_shape = config.weight_quant_key.scale.group_shape
++        if weight_group_shape != GroupShape(128, 128):
++            return False, "Supports only 128x128 block-scaled FP8 weights"
++
++        out_features, in_features = config.weight_shape
++        if in_features <= 0 or in_features % 128 != 0:
++            return False, "Input features must be a positive multiple of 128"
++        if out_features <= 0 or out_features % 128 != 0:
++            return False, "Output features must be a positive multiple of 128"
++        return True, None
++
++    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
++        super().process_weights_after_loading(layer)
++        params = self._get_layer_params(layer)
++        if params.weight_scale_inv is not None:
++            weight_scale = params.weight_scale_inv
++            scale_attr = params.WEIGHT_SCALE_INV
++        else:
++            weight_scale = params.weight_scale
++            scale_attr = params.WEIGHT_SCALE
++        if weight_scale is not None and weight_scale.dtype in (
++            torch.float8_e8m0fnu,
++            torch.uint8,
++        ):
++            # TODO: Remove once B12X supports 128x128 UE8M0 block scales.
++            replace_parameter(
++                layer,
++                scale_attr,
++                _upcast_e8m0_to_fp32(weight_scale).contiguous(),
++            )
++        layer.b12x_block_fp8_linear = True
++
++    def apply_block_scaled_mm(
++        self,
++        A: torch.Tensor,
++        B: torch.Tensor,
++        As: torch.Tensor,
++        Bs: torch.Tensor,
++    ) -> torch.Tensor:
++        return _run_b12x_fp8_block_scaled_mm(
++            A,
++            B,
++            As,
++            Bs,
++            self.config.out_dtype,
++        )
++
++
++__all__ = [
++    "B12xFp8BlockScaledMMKernel",
++    "warmup_b12x_block_fp8_linear",
++]
+diff --git a/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor.py b/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor.py
+new file mode 100644
+index 000000000000..46b27a7d4b4e
+--- /dev/null
++++ b/vllm/model_executor/kernels/linear/scaled_mm/b12x_tensor.py
+@@ -0,0 +1,238 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++
++from __future__ import annotations
++
++from collections.abc import Iterable
++from typing import Any
++
++import torch
++
++from vllm.model_executor.utils import replace_parameter
++from vllm.platforms import current_platform
++from vllm.utils.b12x import (
++    b12x_warmup_token_counts,
++    reuse_packed_weight_storage,
++)
++from vllm.utils.b12x import (
++    get_b12x_tensor_fp8_linear as _import_b12x_tensor_fp8,
++)
++from vllm.utils.torch_utils import current_stream
++
++from .ScaledMMLinearKernel import (
++    FP8ScaledMMLinearKernel,
++    FP8ScaledMMLinearLayerConfig,
++)
++
++
++def _apply_b12x_tensor_fp8_packed_linear(
++    layer: torch.nn.Module,
++    x_q: torch.Tensor,
++    bias: torch.Tensor | None,
++    out_dtype: torch.dtype,
++) -> torch.Tensor:
++    packed_weight = getattr(layer, "b12x_tensor_fp8_packed_weight", None)
++    if packed_weight is None:
++        raise RuntimeError(
++            "b12x tensor FP8 packed weights are missing; "
++            "process_weights_after_loading did not run for this layer"
++        )
++
++    tensor_fp8 = _import_b12x_tensor_fp8()
++    assert tensor_fp8 is not None
++
++    input_2d = x_q.reshape(-1, x_q.shape[-1]).contiguous()
++    output_shape = [*x_q.shape[:-1], int(packed_weight.out_features)]
++    output = tensor_fp8.mm(
++        input_2d,
++        packed_weight,
++        bias=bias,
++        out_dtype=out_dtype,
++        expected_m=max(1, int(input_2d.shape[0])),
++    )
++    return output.view(*output_shape)
++
++
++def warmup_b12x_tensor_fp8_linear(
++    model: torch.nn.Module,
++    *,
++    max_tokens: int,
++    cudagraph_capture_sizes: Iterable[int] = (),
++    output_dtype: torch.dtype = torch.bfloat16,
++) -> int:
++    if not current_platform.is_cuda():
++        return 0
++    if not current_platform.is_device_capability_family(120):
++        return 0
++
++    if output_dtype not in (torch.bfloat16, torch.float16):
++        output_dtype = torch.bfloat16
++
++    layer_map: dict[tuple[Any, ...], Any] = {}
++    for layer in model.modules():
++        packed_weight = getattr(
++            layer,
++            "b12x_tensor_fp8_packed_weight",
++            None,
++        )
++        if packed_weight is None:
++            continue
++        device = torch.device(packed_weight.values.device)
++        signature = (
++            device,
++            int(packed_weight.in_features),
++            int(packed_weight.padded_in_features),
++            int(packed_weight.out_features),
++            output_dtype,
++        )
++        layer_map.setdefault(signature, packed_weight)
++    if not layer_map:
++        return 0
++
++    tensor_fp8 = _import_b12x_tensor_fp8()
++    if tensor_fp8 is None:
++        return 0
++
++    token_counts = b12x_warmup_token_counts(
++        max_tokens=max_tokens,
++        cudagraph_capture_sizes=cudagraph_capture_sizes,
++    )
++    warmed = 0
++    last_device: torch.device | None = None
++
++    with torch.inference_mode():
++        for signature, packed_weight in layer_map.items():
++            last_device = signature[0]
++            warmed += int(
++                tensor_fp8.prewarm(
++                    packed_weight,
++                    token_counts,
++                    out_dtype=output_dtype,
++                    stream=current_stream().cuda_stream,
++                )
++            )
++
++        if warmed > 0 and last_device is not None and last_device.type == "cuda":
++            torch.accelerator.synchronize(last_device)
++
++    return warmed
++
++
++class B12xTensorFP8ScaledMMLinearKernel(FP8ScaledMMLinearKernel):
++    """Static per-tensor FP8 linear through the B12X SM12x dense GEMM."""
++
++    @classmethod
++    def is_supported(
++        cls,
++        compute_capability: int | None = None,
++    ) -> tuple[bool, str | None]:
++        del compute_capability
++        if not current_platform.is_cuda():
++            return False, "b12x tensor FP8 kernels are only available on CUDA"
++        if not current_platform.is_device_capability_family(120):
++            return False, "b12x tensor FP8 kernels require a Blackwell 12x device"
++        tensor_fp8 = _import_b12x_tensor_fp8()
++        if tensor_fp8 is None:
++            return False, "Install the B12X backend with `pip install vllm[b12x]`"
++        if not tensor_fp8.is_supported():
++            return False, "b12x.gemm.tensor_fp8_linear is not supported"
++        return True, None
++
++    @classmethod
++    def can_implement(
++        cls,
++        config: FP8ScaledMMLinearLayerConfig,
++    ) -> tuple[bool, str | None]:
++        activation_scale = config.activation_quant_key.scale
++        weight_scale = config.weight_quant_key.scale
++        if (
++            not activation_scale.static
++            or not activation_scale.group_shape.is_per_tensor()
++        ):
++            return False, "requires static per-tensor activation scales"
++        if not weight_scale.static or not weight_scale.group_shape.is_per_tensor():
++            return False, "requires static per-tensor weight scales"
++        if config.input_dtype not in (torch.bfloat16, torch.float16):
++            return False, "supports only bf16/fp16 input dtype"
++        if config.out_dtype not in (torch.bfloat16, torch.float16):
++            return False, "supports only bf16/fp16 output dtype"
++        out_features, in_features = config.weight_shape
++        if out_features <= 0 or in_features <= 0 or in_features % 32 != 0:
++            return False, "weight dimensions must be positive with K divisible by 32"
++        return True, None
++
++    def process_weights_after_loading(self, layer: torch.nn.Module) -> None:
++        weight, weight_scale, input_scale, _ = self._get_layer_params(layer)
++        if weight.dtype != torch.float8_e4m3fn:
++            raise ValueError(
++                f"b12x tensor FP8 requires float8_e4m3fn weight, got {weight.dtype}"
++            )
++        if weight_scale.numel() != 1 or input_scale is None or input_scale.numel() != 1:
++            raise ValueError(
++                "b12x tensor FP8 requires scalar weight and activation scales"
++            )
++
++        out_features, in_features = map(int, self.config.weight_shape)
++        if tuple(weight.shape) != (in_features, out_features):
++            raise ValueError(
++                "b12x tensor FP8 expects the processed weight in [K,N] layout, "
++                f"got {tuple(weight.shape)} for N={out_features}, K={in_features}"
++            )
++
++        tensor_fp8 = _import_b12x_tensor_fp8()
++        assert tensor_fp8 is not None
++        output_scale = (
++            input_scale.detach().to(torch.float32).reshape(1)
++            * weight_scale.detach().to(torch.float32).reshape(1)
++        ).contiguous()
++        packed_weight = tensor_fp8.pack_weight(
++            weight.detach().T.contiguous(),
++            output_scale,
++        )
++        layer.b12x_tensor_fp8_packed_weight = reuse_packed_weight_storage(
++            getattr(layer, "b12x_tensor_fp8_packed_weight", None),
++            packed_weight,
++        )
++        weight_name, weight_scale_name, _, _ = self.layer_param_names
++        replace_parameter(layer, weight_name, weight.new_empty((0,)))
++        replace_parameter(layer, weight_scale_name, weight_scale.new_empty((0,)))
++
++    def apply_weights(
++        self,
++        layer: torch.nn.Module,
++        x: torch.Tensor,
++        bias: torch.Tensor | None = None,
++    ) -> torch.Tensor:
++        if not isinstance(x, torch.Tensor):
++            raise TypeError("b12x tensor FP8 linear requires a Tensor input")
++        _, _, input_scale, input_scale_ub = self._get_layer_params(layer)
++        input_2d = x.reshape(-1, x.shape[-1])
++        x_q, _ = self.quant_fp8(input_2d, input_scale, input_scale_ub)
++        out_dtype = self.config.out_dtype
++        output = _apply_b12x_tensor_fp8_packed_linear(
++            layer,
++            x_q,
++            bias,
++            out_dtype,
++        )
++        return output.view(*x.shape[:-1], output.shape[-1])
++
++    def apply_scaled_mm(
++        self,
++        *,
++        A: torch.Tensor,
++        B: torch.Tensor,
++        out_dtype: torch.dtype,
++        As: torch.Tensor,
++        Bs: torch.Tensor,
++        bias: torch.Tensor | None,
++        output_shape: list,
++    ) -> torch.Tensor:
++        del A, B, out_dtype, As, Bs, bias, output_shape
++        raise NotImplementedError("b12x tensor FP8 linear overrides apply_weights")
++
++
++__all__ = [
++    "B12xTensorFP8ScaledMMLinearKernel",
++    "warmup_b12x_tensor_fp8_linear",
++]
+diff --git a/vllm/model_executor/warmup/b12x_warmup.py b/vllm/model_executor/warmup/b12x_warmup.py
+new file mode 100644
+index 000000000000..daaa0786286f
+--- /dev/null
++++ b/vllm/model_executor/warmup/b12x_warmup.py
+@@ -0,0 +1,60 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Warm B12X JIT kernels used by a loaded model."""
++
++from typing import TYPE_CHECKING
++
++import torch
++
++from vllm.logger import init_logger
++from vllm.model_executor.kernels.linear.mxfp4.b12x import (
++    warmup_b12x_mxfp4_linear,
++)
++from vllm.model_executor.kernels.linear.mxfp8.b12x import (
++    warmup_b12x_mxfp8_linear,
++)
++from vllm.model_executor.kernels.linear.nvfp4.b12x import (
++    warmup_b12x_nvfp4_linear,
++)
++from vllm.model_executor.kernels.linear.scaled_mm.b12x_block import (
++    warmup_b12x_block_fp8_linear,
++)
++from vllm.model_executor.kernels.linear.scaled_mm.b12x_tensor import (
++    warmup_b12x_tensor_fp8_linear,
++)
++
++if TYPE_CHECKING:
++    from vllm.v1.worker.gpu_worker import Worker
++
++logger = init_logger(__name__)
++
++
++def b12x_warmup(worker: "Worker", cudagraph_capture_sizes: list[int]) -> None:
++    model = worker.get_model()
++    max_tokens = worker.scheduler_config.max_num_batched_tokens
++    output_dtype = getattr(
++        getattr(worker, "model_config", None),
++        "dtype",
++        torch.bfloat16,
++    )
++
++    warmup_kwargs = {
++        "max_tokens": max_tokens,
++        "cudagraph_capture_sizes": cudagraph_capture_sizes,
++        "output_dtype": output_dtype,
++    }
++    providers = (
++        ("block-FP8", warmup_b12x_block_fp8_linear),
++        ("MXFP8", warmup_b12x_mxfp8_linear),
++        ("tensor FP8", warmup_b12x_tensor_fp8_linear),
++        ("MXFP4", warmup_b12x_mxfp4_linear),
++        ("NVFP4", warmup_b12x_nvfp4_linear),
++    )
++    for name, warmup in providers:
++        warmed = warmup(model, **warmup_kwargs)
++        if warmed:
++            logger.info_once(
++                "Warmed up %d B12X %s linear GEMM signatures.",
++                warmed,
++                name,
++            )
+diff --git a/vllm/model_executor/warmup/kernel_warmup.py b/vllm/model_executor/warmup/kernel_warmup.py
+index c35e1ac30c9a..cd16c63b589f 100644
+--- a/vllm/model_executor/warmup/kernel_warmup.py
++++ b/vllm/model_executor/warmup/kernel_warmup.py
+@@ -12,6 +12,7 @@
+ 
+ import vllm.envs as envs
+ from vllm.logger import init_logger
++from vllm.model_executor.warmup.b12x_warmup import b12x_warmup
+ from vllm.model_executor.warmup.cutedsl_warmup import cutedsl_warmup
+ from vllm.model_executor.warmup.deep_gemm_warmup import deep_gemm_warmup
+ from vllm.model_executor.warmup.deepseek_v4_mhc_warmup import (
+@@ -113,15 +114,16 @@ def kernel_warmup(worker: "Worker", *, process_local_only: bool = False):
+ 
+     qwen_triton_warmup(worker.model_runner, worker.vllm_config.model_config)
+ 
++    compilation_config = worker.vllm_config.compilation_config
++    cudagraph_capture_sizes = list(compilation_config.cudagraph_capture_sizes or [])
++
+     # DSv4 mHC TileLang kernels (hc_pre/hc_post/hc_head_op) run every decoder
+     # layer per token; warm them across token sizes first so the first real
+     # request doesn't pay JIT cost. No-op for non-DSv4 models (gated inside).
+     deepseek_v4_mhc_warmup(
+         worker.get_model(),
+         max_tokens=worker.scheduler_config.max_num_batched_tokens,
+-        cudagraph_capture_sizes=(
+-            worker.vllm_config.compilation_config.cudagraph_capture_sizes or []
+-        ),
++        cudagraph_capture_sizes=cudagraph_capture_sizes,
+     )
+ 
+     # Run next so input-prep kernels JIT against pristine runner state.
+@@ -156,6 +158,8 @@ def kernel_warmup(worker: "Worker", *, process_local_only: bool = False):
+         max_tokens = worker.scheduler_config.max_num_batched_tokens
+         deep_gemm_warmup(model, max_tokens)
+ 
++    b12x_warmup(worker, cudagraph_capture_sizes)
++
+     minimax_m3_msa_warmup(worker)
+ 
+     enable_flashinfer_autotune = (
+diff --git a/vllm/utils/b12x.py b/vllm/utils/b12x.py
+new file mode 100644
+index 000000000000..55afa35f093f
+--- /dev/null
++++ b/vllm/utils/b12x.py
+@@ -0,0 +1,101 @@
++# SPDX-License-Identifier: Apache-2.0
++# SPDX-FileCopyrightText: Copyright contributors to the vLLM project
++"""Lazy accessors for the optional ``b12x`` package."""
++
++import functools
++import importlib
++import importlib.util
++from collections.abc import Iterable
++from dataclasses import fields, is_dataclass
++from types import ModuleType
++from typing import Any
++
++import torch
++
++
++@functools.cache
++def has_b12x() -> bool:
++    """Return whether the B12X package is installed."""
++    return importlib.util.find_spec("b12x") is not None
++
++
++@functools.cache
++def _get_submodule(module_name: str) -> ModuleType | None:
++    if not has_b12x():
++        return None
++    try:
++        return importlib.import_module(module_name)
++    except (ImportError, ModuleNotFoundError):
++        return None
++
++
++def get_b12x_blockscaled() -> ModuleType | None:
++    return _get_submodule("b12x.gemm.blockscaled")
++
++
++def get_b12x_intrinsics() -> ModuleType | None:
++    return _get_submodule("b12x._lib.intrinsics")
++
++
++def get_b12x_mxfp8_linear() -> ModuleType | None:
++    return _get_submodule("b12x.gemm.mxfp8_linear")
++
++
++def get_b12x_tensor_fp8_linear() -> ModuleType | None:
++    return _get_submodule("b12x.gemm.tensor_fp8_linear")
++
++
++def b12x_warmup_token_counts(
++    *,
++    max_tokens: int,
++    cudagraph_capture_sizes: Iterable[int] = (),
++) -> tuple[int, ...]:
++    # B12X deduplicates shapes that select the same internal kernel policy.
++    # Keep the complete serving shape set here rather than duplicating its
++    # policy-selection heuristics in vLLM.
++    counts = {1}
++    counts.update(int(size) for size in cudagraph_capture_sizes if int(size) > 0)
++    if int(max_tokens) > 0:
++        counts.add(int(max_tokens))
++    return tuple(sorted(counts))
++
++
++def _same_packed_layout(current: Any, replacement: Any) -> bool:
++    if type(current) is not type(replacement):
++        return False
++    if isinstance(current, torch.Tensor):
++        return (
++            current.shape == replacement.shape
++            and current.stride() == replacement.stride()
++            and current.dtype == replacement.dtype
++            and current.device == replacement.device
++        )
++    if is_dataclass(current):
++        return all(
++            _same_packed_layout(
++                getattr(current, field.name),
++                getattr(replacement, field.name),
++            )
++            for field in fields(current)
++        )
++    return bool(current == replacement)
++
++
++def _copy_packed_tensors(current: Any, replacement: Any) -> None:
++    if isinstance(current, torch.Tensor):
++        current.copy_(replacement)
++    elif is_dataclass(current):
++        for field in fields(current):
++            _copy_packed_tensors(
++                getattr(current, field.name),
++                getattr(replacement, field.name),
++            )
++
++
++@torch.no_grad()
++def reuse_packed_weight_storage(current: Any, replacement: Any) -> Any:
++    """Reuse packed tensor addresses when a compatible weight is reloaded."""
++    if current is None or not _same_packed_layout(current, replacement):
++        return replacement
++    _copy_packed_tensors(current, replacement)
++    return current

@@ -1,0 +1,191 @@
+diff -ruN a/config/cache.py b/config/cache.py
+--- a/config/cache.py	2026-08-11 17:20:02.000000000 +0800
++++ b/config/cache.py	2026-08-21 20:21:06.219378924 +0800
+@@ -25,6 +25,7 @@
+     "fp8_e5m2",
+     "fp8_inc",
+     "fp8_ds_mla",
++    "nvfp4_ds_mla",
+     "turboquant_k8v4",
+     "turboquant_4bit_nc",
+     "turboquant_k3v4_nc",
+diff -ruN a/models/deepseek_v4/attention.py b/models/deepseek_v4/attention.py
+--- a/models/deepseek_v4/attention.py	2026-08-11 17:20:02.000000000 +0800
++++ b/models/deepseek_v4/attention.py	2026-08-21 20:21:06.219816479 +0800
+@@ -87,6 +87,19 @@
+     )
+ 
+ 
++def _dsv4_page_alignment(kv_cache_dtype: str) -> int:
++    """Per-token page slot for a DeepSeek-V4 KV layout.
++
++    NVFP4 packs fp4 data plus fp8 block scales into a 584B envelope;
++    fp8_ds_mla uses 576B; plain bf16 / per-tensor fp8 rows use 512B.
++    """
++    if kv_cache_dtype == "nvfp4_ds_mla":
++        return 584
++    if kv_cache_dtype == "fp8_ds_mla":
++        return 576
++    return 512
++
++
+ def _resolve_dsv4_kv_cache_dtype(
+     use_fp8_ds_mla_layout: bool,
+     kv_cache_dtype: str,
+@@ -102,6 +115,16 @@
+     """
+     if use_fp8_ds_mla_layout:
+         # fp8_ds_mla block format: UE8M0 block-scaled fp8 packed as uint8.
++        # NVFP4 shares the padded MLA envelope, with a 584B per-token
++        # slot instead of 576B. Resolve it before the fp8 assertion so
++        # the fp8-only check keeps applying to genuinely fp8 requests.
++        if kv_cache_dtype in ("nvfp4", "nvfp4_ds_mla"):
++            if cache_config is not None:
++                cache_config.cache_dtype = "nvfp4_ds_mla"
++            logger.info_once(
++                "Using DeepSeek V4 padded nvfp4_ds_mla KV cache format."
++            )
++            return "nvfp4_ds_mla", torch.uint8
+         assert kv_cache_dtype.startswith("fp8"), (
+             f"DeepseekV4 fp8_ds_mla layout only supports fp8 kv-cache, "
+             f"got {kv_cache_dtype}"
+@@ -660,7 +683,10 @@
+         # fp8_ds_mla is a UE8M0 block-scaled uint8 layout and needs 576B
+         # alignment; plain bf16 / per-tensor fp8 rows use natural element-size
+         # pages.
+-        uses_fp8_ds_mla_layout = self.kv_cache_dtype == "fp8_ds_mla"
++        uses_fp8_ds_mla_layout = self.kv_cache_dtype in (
++            "fp8_ds_mla",
++            "nvfp4_ds_mla",
++        )
+         return MLAAttentionSpec(
+             block_size=vllm_config.cache_config.block_size,
+             num_kv_heads=1,
+@@ -668,7 +694,7 @@
+             dtype=torch.uint8 if uses_fp8_ds_mla_layout else self.kv_cache_torch_dtype,
+             compress_ratio=self.compress_ratio,
+             cache_dtype_str=self.kv_cache_dtype,
+-            alignment=576 if uses_fp8_ds_mla_layout else 512,
++            alignment=_dsv4_page_alignment(self.kv_cache_dtype),
+             model_version="deepseek_v4",
+             kv_quant_mode=get_kv_quant_mode(self.kv_cache_dtype),
+         )
+@@ -706,7 +732,7 @@
+             dtype=self.dtype,
+             compress_ratio=self.compress_ratio,
+             # 576B for FlashMLA packing; 512B for FlashInfer sparse (#44577).
+-            alignment=576 if uses_fp8_ds_mla_layout else 512,
++            alignment=_dsv4_page_alignment(self.kv_cache_dtype),
+         )
+ 
+     def forward(self): ...
+diff -ruN a/models/deepseek_v4/sparse_mla.py b/models/deepseek_v4/sparse_mla.py
+--- a/models/deepseek_v4/sparse_mla.py	2026-08-11 17:20:02.000000000 +0800
++++ b/models/deepseek_v4/sparse_mla.py	2026-08-21 20:21:06.219989648 +0800
+@@ -100,7 +100,7 @@
+         head_size: int,
+         cache_dtype_str: str = "auto",
+     ) -> tuple[int, ...]:
+-        if cache_dtype_str == "fp8_ds_mla":
++        if cache_dtype_str in ("fp8_ds_mla", "nvfp4_ds_mla"):
+             # DeepseekV4 main MLA: 584B per token (448 NoPE + 128 RoPE + 8 fp8 scale).
+             # head_size passed in is the semantic head_dim (512).
+             return (num_blocks, block_size, 584)
+diff -ruN a/utils/torch_utils.py b/utils/torch_utils.py
+--- a/utils/torch_utils.py	2026-08-11 17:20:03.000000000 +0800
++++ b/utils/torch_utils.py	2026-08-21 20:21:06.219623278 +0800
+@@ -44,6 +44,7 @@
+     "fp8_per_token_head": torch.uint8,
+     "fp8_inc": torch.float8_e4m3fn,
+     "fp8_ds_mla": torch.uint8,
++    "nvfp4_ds_mla": torch.uint8,
+     "turboquant_k8v4": torch.uint8,
+     "turboquant_4bit_nc": torch.uint8,
+     "turboquant_k3v4_nc": torch.uint8,
+diff -ruN a/v1/attention/backends/mla/flashmla_sparse.py b/v1/attention/backends/mla/flashmla_sparse.py
+--- a/v1/attention/backends/mla/flashmla_sparse.py	2026-08-11 17:20:02.000000000 +0800
++++ b/v1/attention/backends/mla/flashmla_sparse.py	2026-08-21 20:21:06.220103681 +0800
+@@ -135,7 +135,7 @@
+         head_size: int,
+         cache_dtype_str: str = "auto",
+     ) -> tuple[int, ...]:
+-        if cache_dtype_str == "fp8_ds_mla":
++        if cache_dtype_str in ("fp8_ds_mla", "nvfp4_ds_mla"):
+             # V3.2 main MLA: 656-byte custom storage format. See module docstring.
+             return (num_blocks, block_size, 656)
+         else:
+@@ -267,7 +267,7 @@
+             FlashMLASparseImpl._compute_fp8_decode_padded_heads(self.num_heads)
+         )
+ 
+-        self.use_fp8_kv_cache = cache_config.cache_dtype == "fp8_ds_mla"
++        self.use_fp8_kv_cache = cache_config.cache_dtype in ("fp8_ds_mla", "nvfp4_ds_mla")
+         max_num_seqs = vllm_config.scheduler_config.max_num_seqs
+         # Shape: [max_num_seqs], all elements = topk_tokens (constant for full-CG)
+         self.topk_tokens_tensor = torch.full(
+@@ -561,12 +561,12 @@
+         max_tokens = vllm_config.scheduler_config.max_num_batched_tokens
+         q_concat_shape = (max_tokens, num_heads, head_size)
+         if is_quantized_kv_cache(kv_cache_dtype):
+-            assert kv_cache_dtype == "fp8_ds_mla", (
++            assert kv_cache_dtype in ("fp8_ds_mla", "nvfp4_ds_mla"), (
+                 "FlashMLA Sparse Attention backend fp8 only supports "
+                 "fp8_ds_mla kv-cache dtype"
+             )
+ 
+-        if kv_cache_dtype == "fp8_ds_mla":
++        if kv_cache_dtype in ("fp8_ds_mla", "nvfp4_ds_mla"):
+             # Reserve workspace during initialization
+             assert vllm_config is not None and vllm_config.model_config is not None
+             prefill_workspace_size = get_prefill_workspace_size(
+@@ -857,7 +857,7 @@
+         assert self.topk_indices_buffer is not None
+         topk_indices = self.topk_indices_buffer[:num_actual_toks]
+ 
+-        use_fp8_cache = self.kv_cache_dtype == "fp8_ds_mla"
++        use_fp8_cache = self.kv_cache_dtype in ("fp8_ds_mla", "nvfp4_ds_mla")
+ 
+         if not use_fp8_cache:
+             attn_out = self._forward_bf16_kv(
+diff -ruN a/v1/attention/backends/mla/sparse_swa.py b/v1/attention/backends/mla/sparse_swa.py
+--- a/v1/attention/backends/mla/sparse_swa.py	2026-08-11 17:20:02.000000000 +0800
++++ b/v1/attention/backends/mla/sparse_swa.py	2026-08-21 20:21:06.220252482 +0800
+@@ -87,7 +87,7 @@
+     def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec:
+         # fp8_ds_mla's UE8M0 paged layout needs 576B alignment; contiguous
+         # bf16/fp8 cache uses the natural element-size page.
+-        uses_fp8_ds_mla_layout = self.cache_config.cache_dtype == "fp8_ds_mla"
++        uses_fp8_ds_mla_layout = self.cache_config.cache_dtype in ("fp8_ds_mla", "nvfp4_ds_mla")
+         return SlidingWindowMLASpec(
+             block_size=self.block_size,
+             num_kv_heads=1,
+@@ -143,7 +143,7 @@
+         cache_dtype_str: str = "auto",
+     ) -> tuple[int, ...]:
+         assert num_kv_heads == 1
+-        if cache_dtype_str == "fp8_ds_mla":
++        if cache_dtype_str in ("fp8_ds_mla", "nvfp4_ds_mla"):
+             # DeepseekV4 SWA: 584B per token (448 NoPE + 128 RoPE + 8 fp8 scale).
+             # head_size passed in is the semantic head_dim (512).
+             return (num_blocks, block_size, 584)
+diff -ruN a/v1/kv_cache_interface.py b/v1/kv_cache_interface.py
+--- a/v1/kv_cache_interface.py	2026-08-11 17:20:02.000000000 +0800
++++ b/v1/kv_cache_interface.py	2026-08-21 20:21:06.220392082 +0800
+@@ -406,7 +406,7 @@
+ 
+     @property
+     def real_page_size_bytes(self) -> int:
+-        if self.cache_dtype_str == "fp8_ds_mla":
++        if self.cache_dtype_str in ("fp8_ds_mla", "nvfp4_ds_mla"):
+             if self.model_version == "deepseek_v4":
+                 # DeepseekV4: 448B NoPE + 128B RoPE + 8B fp8 scale = 584B per token.
+                 # head_size stays semantic (512); bytes are determined here.
+@@ -646,7 +646,7 @@
+ 
+     @property
+     def real_page_size_bytes(self) -> int:
+-        if self.model_version == "deepseek_v4" and self.cache_dtype_str == "fp8_ds_mla":
++        if self.model_version == "deepseek_v4" and self.cache_dtype_str in ("fp8_ds_mla", "nvfp4_ds_mla"):
+             # DeepseekV4 FlashMLA: 448B NoPE + 128B RoPE + 8B fp8 scale = 584B
+             # per token. FlashInfer's contiguous bf16/fp8 cache falls through to
+             # the element-size formula below.
