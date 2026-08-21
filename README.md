@@ -128,8 +128,51 @@ Using DeepSeek V4 padded nvfp4_ds_mla KV cache format
 GPU KV cache size: N tokens
 ```
 
-Note `--moe-backend b12x` (the #52018 FP4 MoE kernels), not `flashinfer_b12x`
-(the older NVFP4-only CuteDSL path).
+### Backend naming: `b12x` vs `flashinfer_b12x`
+
+Both names exist, both are accepted by `--moe-backend`, and picking the wrong
+one produces an error that reads like the patch failed:
+
+```
+ValueError: moe_backend='flashinfer_b12x' is not supported for MXFP4 MoE.
+Expected one of ['deep_gemm', 'flashinfer_trtllm', ..., 'marlin', ...]
+```
+
+That message lists the *stock* MXFP4 backends and says nothing about b12x, so it
+looks like the cherry-pick did not land. It did. From `config/kernel.py`:
+
+| value | meaning |
+|---|---|
+| **`b12x`** | native b12x FP4 MoE kernels on SM12x, added by **#52018**. **Use this.** |
+| `flashinfer_b12x` | FlashInfer CuteDSL fused MoE, the older **NVFP4-only** path |
+
+DeepSeek-V4's experts are MXFP4, so only `b12x` reaches them. The MXFP4 backends
+#52018 registers are `B12X_MXFP4_MXFP8` and `B12X_MXFP4_BF16`, dispatched via
+`B12X_BACKENDS` in `fused_moe/oracle/mxfp4.py`.
+
+To check the cherry-pick landed, independently of any flag:
+
+```bash
+docker run --rm --entrypoint bash <image> -lc \
+  'grep -c B12X_BACKENDS /usr/local/lib/python3.12/dist-packages/vllm/model_executor/layers/fused_moe/oracle/mxfp4.py'
+```
+
+Same applies to `--linear-backend b12x` (native B12X FP8/FP4 linear kernels,
+from #52016) versus `flashinfer_b12x` (FlashInfer b12x CuteDSL NVFP4 GEMM).
+
+## Settings the fork images bake in, and stock ones do not
+
+Moving to official lineage means inheriting upstream defaults instead of a
+fork's GB10 tuning. Two that surface immediately:
+
+| Symptom | Cause | Fix |
+|---|---|---|
+| `Assertion error (deepgemm-src/csrc/apis/layout.hpp:60): Unknown SF transformation` | DeepGEMM linear path gets a scale layout it does not recognise | `--linear-backend b12x` to route around DeepGEMM, and/or `VLLM_USE_DEEP_GEMM_E8M0=1` |
+| `moe_backend=... is not supported for MXFP4 MoE` | wrong backend name, see above | `--moe-backend b12x` |
+
+`VLLM_USE_DEEP_GEMM_E8M0=1` is described in bjk110's DeepSeek-V4 preset as
+mandatory for the SM121 numerical contract. Note that on its own it did **not**
+clear the assertion here; the linear backend mattered.
 
 ## Not included
 
