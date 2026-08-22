@@ -142,6 +142,58 @@ a `ValueError` that names the offending range, tensor shape, dtype and stride.
 It deliberately does not attempt items 1, 3 and 4, which are a feature rather
 than a bug fix.
 
+## Tested end to end, 2026-08-22
+
+The analysis above was static. It has since been built and run on 2x DGX Spark
+(GB10, TP=2) against the stock eugr b12x image, using the `fs` (filesystem)
+secondary tier on NVMe. Both KV layouts fail identically.
+
+Config, with the schema taken from `TieringOffloadingSpec`'s own docstring
+rather than guessed:
+
+```
+--kv-transfer-config '{
+  "kv_connector": "OffloadingConnector",
+  "kv_role": "kv_both",
+  "kv_connector_extra_config": {
+    "spec_name": "TieringOffloadingSpec",
+    "cpu_bytes_to_use": 8589934592,
+    "secondary_tiers": [{
+      "type": "fs",
+      "root_dir": "/cache/kvspill",
+      "n_read_threads": 8, "n_write_threads": 8,
+      "gc_max_size_gb": 512, "gc_low_watermark": 0.85
+    }]
+  }
+}'
+```
+
+| KV dtype | page layout | result |
+|---|---|---|
+| `fp8_ds_mla` | 584B padded | `CUDA error: an illegal memory access was encountered` |
+| `fp8` | flat rows | **identical fault** |
+
+Two findings that correct assumptions in the sections above:
+
+**The offload machinery works; only the transfer path fails.** The connector is
+constructed and validated (it rejects `PYTORCH_CUDA_ALLOC_CONF=expandable_segments`
+by name, because offload registers fixed DMA buffers that expandable segments
+cannot provide), and **~1 MB of KV reached the NVMe before the fault**. So this
+is not a configuration or capability gap, it is `compute_sub_block_ptrs()`
+walking off the allocation exactly as predicted.
+
+**Switching to a flat-row dtype does not help**, which rules out the obvious
+workaround. `fp8` satisfies the flat-layout assumption for the *main* MLA group,
+but DeepSeek-V4 builds a hybrid cache with three groups (main MLA at
+`compress_ratio` 4/128, the sparse-indexer cache, and a sliding-window group).
+The indexer and SWA groups take `_opaque_fallback_mapping` regardless of the
+main dtype, so item 3 above (multi-group support) is the binding blocker, not
+item 1 (page geometry) as originally supposed.
+
+Practical consequence: **there is no KV-dtype or config combination that enables
+disk offload for DeepSeek-V4 on vLLM 0.27.1.** Anyone attempting this should
+start from item 3.
+
 ## Why this repo does not work around it
 
 Forcing the transfer would mean writing KV pages the kernels then read back with
