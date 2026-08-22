@@ -1,0 +1,89 @@
+diff -ruN pristine/vllm/config/vllm.py t2/vllm/config/vllm.py
+--- a/vllm/config/vllm.py	2026-08-16 06:21:45.000000000 +0800
++++ b/vllm/config/vllm.py	2026-08-21 23:49:13.821948242 +0800
+@@ -2496,7 +2496,7 @@
+         if self.model_config is None:
+             return self
+         if (
+-            self.cache_config.cache_dtype.startswith("nvfp4")
++            self.cache_config.cache_dtype == "nvfp4"
+             and self.model_config.use_mla
+         ):
+             raise ValueError(
+diff -ruN pristine/vllm/models/deepseek_v4/attention.py t2/vllm/models/deepseek_v4/attention.py
+--- a/vllm/models/deepseek_v4/attention.py	2026-08-16 06:21:45.000000000 +0800
++++ b/vllm/models/deepseek_v4/attention.py	2026-08-21 23:49:13.831741499 +0800
+@@ -108,6 +108,13 @@
+     token's KV row in its element dtype: bf16 or per-tensor FP8 E4M3.
+     """
+     if use_fp8_ds_mla_layout:
++        # nvfp4_ds_mla is the same paged envelope as fp8_ds_mla, packed as
++        # uint8 with a 584B per-token slot instead of 576B.
++        if kv_cache_dtype in ("nvfp4", "nvfp4_ds_mla"):
++            if cache_config is not None:
++                cache_config.cache_dtype = "nvfp4_ds_mla"
++            logger.info_once("Using DeepSeek V4 padded nvfp4_ds_mla KV cache format.")
++            return "nvfp4_ds_mla", torch.uint8
+         # fp8_ds_mla block format: UE8M0 block-scaled fp8 packed as uint8.
+         assert kv_cache_dtype.startswith("fp8"), (
+             f"DeepseekV4 fp8_ds_mla layout only supports fp8 kv-cache, "
+@@ -979,7 +986,10 @@
+         # fp8_ds_mla is a UE8M0 block-scaled uint8 layout and needs 576B
+         # alignment; plain bf16 / per-tensor fp8 rows use natural element-size
+         # pages.
+-        uses_fp8_ds_mla_layout = self.kv_cache_dtype == "fp8_ds_mla"
++        uses_fp8_ds_mla_layout = self.kv_cache_dtype in (
++            "fp8_ds_mla",
++            "nvfp4_ds_mla",
++        )
+         return MLAAttentionSpec(
+             block_size=vllm_config.cache_config.block_size,
+             num_kv_heads=1,
+diff -ruN pristine/vllm/v1/attention/backends/mla/sparse_swa.py t2/vllm/v1/attention/backends/mla/sparse_swa.py
+--- a/vllm/v1/attention/backends/mla/sparse_swa.py	2026-08-16 06:21:44.000000000 +0800
++++ b/vllm/v1/attention/backends/mla/sparse_swa.py	2026-08-21 23:49:13.832366221 +0800
+@@ -89,7 +89,10 @@
+     def get_kv_cache_spec(self, vllm_config: VllmConfig) -> KVCacheSpec:
+         # fp8_ds_mla's UE8M0 paged layout needs 576B alignment; contiguous
+         # bf16/fp8 cache uses the natural element-size page.
+-        uses_fp8_ds_mla_layout = self.cache_config.cache_dtype == "fp8_ds_mla"
++        uses_fp8_ds_mla_layout = self.cache_config.cache_dtype in (
++            "fp8_ds_mla",
++            "nvfp4_ds_mla",
++        )
+         return SlidingWindowMLASpec(
+             block_size=self.block_size,
+             num_kv_heads=1,
+@@ -145,7 +148,7 @@
+         cache_dtype_str: str = "auto",
+     ) -> tuple[int, ...]:
+         assert num_kv_heads == 1
+-        if cache_dtype_str == "fp8_ds_mla":
++        if cache_dtype_str in ("fp8_ds_mla", "nvfp4_ds_mla"):
+             # DeepseekV4 SWA: 584B per token (448 NoPE + 128 RoPE + 8 fp8 scale).
+             # head_size passed in is the semantic head_dim (512).
+             return (num_blocks, block_size, 584)
+diff -ruN pristine/vllm/v1/kv_cache_interface.py t2/vllm/v1/kv_cache_interface.py
+--- a/vllm/v1/kv_cache_interface.py	2026-08-16 06:21:44.000000000 +0800
++++ b/vllm/v1/kv_cache_interface.py	2026-08-21 23:49:13.832280493 +0800
+@@ -501,7 +501,7 @@
+                 # model_type=glm_moe_dsa. DeepSeek-V4 and V3.2 stay stock.
+                 return self.block_size * 368
+             return self.block_size * 432
+-        if self.cache_dtype_str == "fp8_ds_mla":
++        if self.cache_dtype_str in ("fp8_ds_mla", "nvfp4_ds_mla"):
+             if self.model_version == "deepseek_v4":
+                 # DeepseekV4: 448B NoPE + 128B RoPE + 8B fp8 scale = 584B per token.
+                 # head_size stays semantic (512); bytes are determined here.
+@@ -760,7 +760,10 @@
+ 
+     @property
+     def real_page_size_bytes(self) -> int:
+-        if self.model_version == "deepseek_v4" and self.cache_dtype_str == "fp8_ds_mla":
++        if self.model_version == "deepseek_v4" and self.cache_dtype_str in (
++            "fp8_ds_mla",
++            "nvfp4_ds_mla",
++        ):
+             # DeepseekV4 FlashMLA: 448B NoPE + 128B RoPE + 8B fp8 scale = 584B
+             # per token. FlashInfer's contiguous bf16/fp8 cache falls through to
+             # the element-size formula below.

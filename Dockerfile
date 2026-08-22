@@ -99,6 +99,30 @@ assert "nvfp4_ds_mla" in opts, f"nvfp4_ds_mla not an accepted --kv-cache-dtype: 
 from vllm.models.deepseek_v4 import attention as a
 assert a._dsv4_page_alignment("nvfp4_ds_mla") == 584, "wrong NVFP4 page envelope"
 assert a._dsv4_page_alignment("fp8_ds_mla") == 576, "fp8_ds_mla envelope regressed"
+# Only the main KV cache takes the 584B envelope. The indexer and sliding-window
+# caches must keep upstream's 576/512, so assert they were left alone: widening
+# them looks plausible and costs a full model load before FlashInfer rejects it.
+import inspect
+from vllm.models.deepseek_v4 import compressor as c
+swa = inspect.getsource(c.CompressorStateCache.get_kv_cache_spec)
+idx = inspect.getsource(a.DeepseekV4IndexerCache.get_kv_cache_spec)
+assert "_dsv4_page_alignment" not in swa, "SWA cache must keep upstream alignment"
+assert "_dsv4_page_alignment" not in idx, "indexer cache must keep upstream alignment"
+# The sliding-window spec that FlashInfer actually reads. It must give
+# nvfp4_ds_mla its own 584 branch; sharing the fp8 predicate yields 576 and
+# fails at the first decode, after a full load and KV allocation.
+from vllm.v1.attention.backends.mla import sparse_swa
+sw = inspect.getsource(sparse_swa.DeepseekV4SWACache.get_kv_cache_spec)
+assert "584" in sw, "SWA sparse spec missing the nvfp4 584B envelope"
+# The KV allocator passes "auto" instead of the real dtype when the quant mode
+# is NONE, which silently drops the packed layout and builds a 512-wide cache.
+from vllm.v1.kv_cache_interface import KVQuantMode, get_kv_quant_mode
+assert get_kv_quant_mode("nvfp4_ds_mla") == KVQuantMode.NVFP4, (
+    "nvfp4_ds_mla must classify as NVFP4 or the allocator ignores the packed layout"
+)
+assert sparse_swa.DeepseekSparseSWABackend.get_kv_cache_shape(
+    1, 64, 1, 512, cache_dtype_str="nvfp4_ds_mla"
+) == (1, 64, 584), "SWA cache shape is not the 584B packed envelope"
 print("image OK: b12x importable, nvfp4_ds_mla accepted, 584B envelope wired")
 PY
 

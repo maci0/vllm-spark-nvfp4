@@ -57,21 +57,95 @@ from #52016, so both are cherry-picked.
 
 ### Per-site dtype binding
 
-`models/deepseek_v4/attention.py` computes the page alignment in two different
-classes, each deriving the KV dtype from a different place:
+Page alignment is computed in **four** places across three files. Two take the
+584B envelope and two must stay at upstream values. Getting this split wrong is
+the single easiest way to break the image:
 
-| site | class | dtype source |
+| site | file / class | nvfp4_ds_mla alignment |
 |---|---|---|
-| ~663 | `DeepseekV4Attention` | `self.kv_cache_dtype` |
-| ~698 | `DeepseekV4IndexerCache` | `vllm_config.cache_config.cache_dtype` |
+| ~698 | `attention.py` / `DeepseekV4Attention` (main KV) | **584** (patched) |
+| ~100 | `sparse_swa.py` / `DeepseekV4SWACache` | **584** (patched) |
+| ~736 | `attention.py` / `DeepseekV4IndexerCache` | 512, upstream, untouched |
+| ~202 | `compressor.py` / `CompressorStateCache` | 512, upstream, untouched |
 
-The patch binds each site's own expression to a local `_dsv4_cache_dtype` and
-passes that to the alignment helper. Substituting `self.kv_cache_dtype` at both
-sites looks correct and builds fine, but fails at runtime with:
+The SWA site is the one that bites. Upstream writes it as
+
+```python
+uses_fp8_ds_mla_layout = self.cache_config.cache_dtype == "fp8_ds_mla"
+alignment=576 if uses_fp8_ds_mla_layout else 512,
+```
+
+and the obvious-looking fix is to widen the predicate to
+`in ("fp8_ds_mla", "nvfp4_ds_mla")`. That is wrong: it routes NVFP4 into the
+**576** branch. NVFP4 needs its own 584 branch, so the ladder is
+`584 / 576 / 512`, not a two-way test.
+
+The patched site binds `self.kv_cache_dtype` to a local `_dsv4_cache_dtype` and
+passes it to the alignment helper, and it is also the only site that sets
+`dtype=torch.uint8`, `cache_dtype_str` and `model_version="deepseek_v4"`. The
+indexer cache derives its dtype from a different expression entirely, so reusing
+`self.kv_cache_dtype` there fails at runtime with:
 
 ```
 'DeepseekV4IndexerCache' object has no attribute 'kv_cache_dtype'
 ```
+
+### The quant-mode gate that controls all of it
+
+Before any alignment matters, `nvfp4_ds_mla` has to be recognised as a
+quantized cache at all. Upstream `get_kv_quant_mode` matches the bare string
+only:
+
+```python
+if kv_cache_dtype == "nvfp4":          # "nvfp4_ds_mla" falls through to NONE
+    return KVQuantMode.NVFP4
+```
+
+The KV allocator then does:
+
+```python
+layer_cache_dtype = "auto" if spec.kv_quant_mode == KVQuantMode.NONE else cache_dtype
+kv_cache_shape = backend.get_kv_cache_shape(..., cache_dtype_str=layer_cache_dtype)
+```
+
+so a `NONE` mode **hides the real dtype from the shape function**, which returns
+the semantic `head_size` (512) rather than the packed 584B envelope. Both
+`get_kv_cache_shape` implementations already handle `nvfp4_ds_mla` correctly;
+they simply never see it.
+
+This is the actual root cause of the `head dim 584, got 512` failure, and it is
+invisible from the alignment code: the page alignment can be right at every one
+of the four sites and the cache is still built 512 wide.
+
+### The failure it produces
+
+Any of these sites being wrong costs a **full model load plus KV allocation**
+before it surfaces, roughly 8 minutes per attempt, and the message points at a
+head dim that no vLLM file ever sets:
+
+```
+ValueError: Expected packed SM120 DSV4 swa_kv_cache head dim 584, got 512
+```
+
+The check is in **FlashInfer**, not vLLM (`flashinfer/mla/_core.py`), and it
+fires on `dtype == torch.uint8` alone. Since `_resolve_dsv4_kv_cache_dtype`
+maps `nvfp4_ds_mla` to `uint8`, the SWA cache enters FlashInfer's packed SM120
+branch whether or not its page geometry is packed.
+
+Two dead ends worth recording, because both look right:
+
+- **`compressor.py` is not the SWA cache.** `get_kv_cache_spec` in
+  `attention.py` returns `None` early when `compress_ratio <= 1` with the
+  comment *"SWA part. Allocated separately as DeepseekV4SWACache"*. That class
+  lives in `sparse_swa.py`; `CompressorStateCache` in `compressor.py` is a
+  different cache and must stay at upstream values.
+- **`alignment` is not `head_size`.** `_apply_alignment_padding` only sets
+  `page_size_padded`. Changing it shifts the KV token count, which reads like
+  progress, without moving the dimension FlashInfer inspects.
+
+The reference for the whole split is
+`ghcr.io/anemll/dspark-vllm-gx10:0.1.1`, which serves 2.49M tokens of
+`nvfp4_ds_mla` against the same FlashInfer packed check.
 
 ### Deliberately dropped hunks
 
